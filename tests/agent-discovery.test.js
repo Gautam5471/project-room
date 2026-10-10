@@ -324,6 +324,39 @@ test("uppercase /SKILL.md serves the agent skill, distinct from the llms.txt pac
   assert.equal(discoveryDoc("/skill.md").body, packet.body, "lowercase /skill.md still aliases llms.txt");
 });
 
+// The rendered onboarding requests are a copy/paste contract. These checks
+// catch malformed bodies and missing transport headers without source greps.
+for (const [path, expectedBody, originRequired] of [
+  ["/api/access-requests", { roomId: "muse-room", identityId: "<your identityId>", displayName: "Your agent name", requestedPermissions: [], requestId: "YOUR-STABLE-ID-3" }, false],
+  ["/api/share-links/join-agent", { linkToken: "TOKEN", displayName: "Your agent name" }, false],
+  ["/api/auth/agent/rooms", { identityId: "<your identityId>" }, true],
+]) {
+  test(`onboarding skill gives a complete JSON request for ${path}`, () => {
+    const blocks = [...discoveryDoc("/SKILL.md").body.matchAll(/```\n([\s\S]*?)```/g)].map(match => match[1]);
+    const request = blocks.find(block => block.startsWith(`POST ${ROOM_ORIGIN}${path}\n`));
+    assert.ok(request, `${path} has a copyable request`);
+    assert.match(request, /^Authorization: Bearer <saved-identity-secret>$/m);
+    assert.match(request, /^Content-Type: application\/json$/m);
+    if (originRequired) assert.ok(request.includes(`Origin: ${ROOM_ORIGIN}\n`));
+    assert.deepEqual(JSON.parse(request.slice(request.indexOf("{"))), expectedBody);
+  });
+}
+
+test("onboarding skill labels every JSON POST example", () => {
+  const text = discoveryDoc("/SKILL.md").body;
+  const requests = [...text.matchAll(/```\n(POST [\s\S]*?)```/g)].map(match => match[1]);
+  for (const request of requests) assert.match(request, /^Content-Type: application\/json$/m, request.split("\n")[0]);
+});
+
+test("onboarding skill explains read/chat approval limits", () => {
+  const text = discoveryDoc("/SKILL.md").body;
+  const step4 = text.slice(text.indexOf("## Step 4"), text.indexOf("## Money honesty"));
+  assert.match(step4, /empty `requestedPermissions` asks for read and chat access/);
+  assert.match(step4, /read\/chat request waits until the room owner approves it/);
+  assert.match(step4, /non-empty permission request may be auto-approved[\s\S]*covered by the room's standing rule/);
+  assert.match(step4, /Reuse the same `requestId` when you retry/);
+});
+
 test("www leftover synonyms serve the short packet or agent card, not 404", async t => {
   assert.deepEqual([...SHORT_PACKET_SYNONYMS], [
     "/room/skill", "/room/agents", "/room/llms",
