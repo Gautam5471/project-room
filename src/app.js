@@ -7547,7 +7547,9 @@ document.addEventListener("click", event => {
   // sidebar overlay: clicks inside it are dialog interactions, not "outside"
   // clicks. Dismissing the sidebar under them hides the dialog trigger while it
   // still holds restored focus, dropping focus to <body> on mobile.
-  if (event.target.closest("dialog")) return;
+  // The path is fixed at dispatch, so a dialog choice whose handler already
+  // re-rendered the menu (detaching the target) still counts as inside it.
+  if (event.target.closest("dialog") || event.composedPath().some(node => node.nodeName === "DIALOG")) return;
   shell.classList.remove("sidebar-open");
   $("#sidebar-toggle").setAttribute("aria-expanded", "false");
 });
