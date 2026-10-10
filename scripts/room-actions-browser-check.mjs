@@ -164,6 +164,24 @@ test("room actions reach work, invitation, agent and instructions without creati
   }
 });
 
+// R27-2: on a phone the people list lives in the sidebar drawer. Choosing a
+// room action re-renders the menu, so by the time the click reaches the
+// document's outside-click handler its target is detached, reads as "outside"
+// and shuts the drawer that the action just opened. Focus then falls to <body>.
+test("room actions on a phone: People and How to add an agent leave the drawer open with focus inside it", { timeout: 30000 }, async t => {
+  const f = await setup(t, { mobile: true }), p = f.page;
+  for (const [id, focused] of [["people", "#people-panel > summary"], ["how-agent", "#connect-agent-button"]]) {
+    await f.open(); await f.action(id).click();
+    await p.waitForTimeout(100);
+    assert.equal(await p.locator("#main").evaluate(node => node.classList.contains("sidebar-open")), true, `${id}: the sidebar drawer stays open`);
+    assert.equal(await p.locator("#people-panel").evaluate(node => node.open), true, `${id}: people panel open`);
+    assert.equal(await p.locator(focused).isVisible(), true, `${id}: ${focused} is visible`);
+    assert.equal(await p.locator(focused).evaluate(node => node === document.activeElement), true, `${id}: focus lands on ${focused}, not <body>`);
+    await p.keyboard.press("Escape");
+    await p.waitForFunction(() => !document.querySelector("#main").classList.contains("sidebar-open"));
+  }
+});
+
 test("room actions fit a small touch viewport and keep the last action reachable", { timeout: 30000 }, async t => {
   const f = await setup(t, { mobile: true }), p = f.page;
   await p.setViewportSize({ width: 320, height: 568 });
