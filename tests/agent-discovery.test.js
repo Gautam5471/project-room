@@ -280,6 +280,10 @@ test("uppercase /SKILL.md serves the agent skill, distinct from the llms.txt pac
   assert.match(skill.type, /text\/markdown/, "served as markdown");
   assert.ok(skill.body.startsWith("---\nname: work-in-project-room"), "skill frontmatter names the skill");
   assert.ok(skill.body.includes("## Step 1"), "skill walks setup steps");
+  assert.ok(skill.body.includes("Step 5"), "skill walks a listening step: setup ends in a verified wake loop");
+  assert.ok(skill.body.includes("/api/agent-wakes/poll"), "skill teaches the wake poll endpoint");
+  assert.ok(skill.body.includes("/api/agent-heartbeats"), "skill teaches host heartbeat registration");
+  assert.ok(skill.body.includes("not done until"), "skill names the listening done-condition: never claim setup done before the first verified poll");
   assert.ok(skill.body.includes("/api/public-work/match"), "skill covers finding work");
   assert.ok(skill.body.includes("/api/project-offers"), "skill covers paid bounties");
   assert.ok(skill.body.includes("Money honesty"), "skill carries the money-honesty section");
