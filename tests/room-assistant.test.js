@@ -486,6 +486,9 @@ test('cancel on a silent host completes immediately and revokes the attempt (ind
   const stopped = await api('owner',{action:'cancel',runId:'silent',expectedRevision:1});
   assert.equal(stopped.result.status,'cancelled');
   assert.equal(stopped.result.attemptId,null);
+  assert.equal(stopped.result.stopOutcome,'attempt_revoked');
+  assert.equal((await api('owner')).runs[0].displayStatus,'unknown');
+  assert.match(stopped.result.activity.at(-1).summary,/execution could not be confirmed/i);
   // The revoked attempt can no longer report or publish.
   await api('producer',{action:'report',runId:'silent',attemptId:'host-1',expectedRevision:2,state:'cancelled',summary:'Late ack'},409);
   await api('producer',{action:'publish',runId:'silent',attemptId:'host-1',expectedRevision:2,summary:'Late.',body:'Late answer.',appliedInputMessageIds:['silent-opening']},409);

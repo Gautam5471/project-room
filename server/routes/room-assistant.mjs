@@ -5,7 +5,7 @@ const params={type:'object',required:['roomId'],properties:{roomId:id}};
 const body={type:'object',required:['action','requestId'],additionalProperties:false,properties:{
   action:{type:'string',enum:['configure','invoke','contribute','resolve','claim','report','publish','pause','cancel','resume']},requestId:id,runId:id,sourceMessageId:id,attemptId:id,resultMessageId:id,
   body:{type:'string',minLength:1,maxLength:65536},
-  expectedRevision:{type:'integer',minimum:0},name:{type:'string',minLength:1,maxLength:64},coordinatorMemberId:{type:['string','null']},conflict:{type:'boolean'},state:{type:'string',enum:['working','needs_input','paused','cancelled','done','failed']},summary:{type:'string',minLength:1,maxLength:2000},appliedInputMessageIds:{type:'array',items:id,maxItems:100}
+  expectedAttemptId:{...id,type:['string','null']},expectedRevision:{type:'integer',minimum:0},name:{type:'string',minLength:1,maxLength:64},coordinatorMemberId:{type:['string','null']},conflict:{type:'boolean'},state:{type:'string',enum:['working','needs_input','paused','cancelled','done','failed']},summary:{type:'string',minLength:1,maxLength:2000},appliedInputMessageIds:{type:'array',items:id,maxItems:100}
 }};
 export async function roomAssistantRoute(ctx) {
   const roomId=ctx.params.roomId;

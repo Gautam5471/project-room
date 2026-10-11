@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS room_assistant_ops (room_id TEXT NOT NULL, actor_id T
 const fail = (code, message, status = 409) => { throw Object.assign(new Error(message), { code, status }); };
 const terminal = new Set(['done', 'cancelled', 'failed']);
 // A host that has not reported within this window is treated as silent: the
-// run reads stalled/unknown, and a stop completes without its acknowledgment.
+// run reads stalled/unknown. Stop revokes publication but cannot confirm execution ended.
 const hostStaleAfterMs = 120000;
 // A queued run nobody claimed within this window reads not picked up.
 const notPickedUpAfterMs = 10000;
@@ -28,7 +28,7 @@ const keys = {
   // transaction that completes the run, so a stop that landed first rejects
   // the publish and a stopped run can never leave its answer in chat.
   publish: ['runId', 'attemptId', 'expectedRevision', 'summary', 'body', 'appliedInputMessageIds'],
-  resume: ['runId', 'expectedRevision'], pause: ['runId', 'expectedRevision'], cancel: ['runId', 'expectedRevision']
+  resume: ['runId', 'expectedRevision'], pause: ['runId', 'expectedRevision', 'expectedAttemptId'], cancel: ['runId', 'expectedRevision', 'expectedAttemptId']
 };
 // Deleted prompts retain only a stop handle for their existing controllers.
 // The history floor still applies: deletion cannot reveal older work to newcomers.
@@ -39,6 +39,7 @@ const keys = {
 // working run that never reported reads unknown (legacy rows only — claim
 // always stamps hostReportedAt).
 const derivedRunStatus = (run, now) => {
+  if (run.stopOutcome === 'attempt_revoked') return 'unknown';
   if (run.status === 'queued' && now - run.createdAt > notPickedUpAfterMs) return 'not_picked_up';
   if (run.status === 'working') {
     if (!Number.isFinite(run.hostReportedAt)) return 'unknown';
@@ -51,7 +52,7 @@ const controlsDeletedSource = (run, opening, actor, state, floor) => Boolean(
   && (actor.kind === 'human' && (actor.id === run.initiatorId || actor.id === state.room.ownerId)
     || actor.kind === 'agent' && actor.id === run.coordinatorMemberId && run.attemptId && actor.permissions.includes('accept_work')));
 const deletedControl = run => Object.fromEntries([
-  ...['id', 'sourceMessageId', 'initiatorId', 'coordinatorMemberId', 'status', 'revision', 'attemptId', 'createdAt', 'updatedAt', 'hostReportedAt'].map(key => [key, run[key]]),
+  ...['id', 'sourceMessageId', 'initiatorId', 'coordinatorMemberId', 'status', 'revision', 'attemptId', 'createdAt', 'updatedAt', 'hostReportedAt', 'stopOutcome'].map(key => [key, run[key]]),
   ['sourceDeleted', true], ['inputs', []], ['activity', []]
 ]);
 // Called only after a validated message edit, inside the command transaction.
@@ -113,6 +114,8 @@ export class RoomAssistant {
       fail('invalid_assistant_action', 'Choose an assistant action and stable request ID', 422);
     for (const key of ['runId', 'sourceMessageId', 'attemptId', 'resultMessageId'])
       if (input[key] !== undefined && !validId(input[key])) fail('invalid_assistant_action', `Invalid ${key}`, 422);
+    if (Object.hasOwn(input, 'expectedAttemptId') && input.expectedAttemptId !== null && !validId(input.expectedAttemptId))
+      fail('invalid_assistant_action', 'Invalid expectedAttemptId', 422);
     return this.store.transaction(() => {
       const auth = authorize(), state = this.store.room(roomId).state, actor = auth.member;
       if (isGuestAgentMemberId(actor.id) || actor.permissions?.some(p => p.startsWith('guest:')))
@@ -192,7 +195,13 @@ export class RoomAssistant {
               && (isHuman && ['pause', 'cancel'].includes(input.action)
                 || actor.kind === 'agent' && input.action === 'report' && ['paused', 'cancelled', 'failed'].includes(input.state))))
             fail('assistant_run_missing', 'Request not found', 404);
-          if (input.expectedRevision !== run.revision) fail('assistant_revision_conflict', 'The request changed; read it before retrying');
+          // Human controls bind to the execution they observed, not incidental
+          // progress revisions. Explicit null binds a queued, unclaimed request.
+          // Older clients retain their revision fence; never guess the attempt.
+          const exactControl = ['pause', 'cancel'].includes(input.action) && Object.hasOwn(input, 'expectedAttemptId');
+          if (exactControl) {
+            if (input.expectedAttemptId !== run.attemptId) fail('assistant_attempt_changed', 'The execution changed; read it before controlling it');
+          } else if (input.expectedRevision !== run.revision) fail('assistant_revision_conflict', 'The request changed; read it before retrying');
           if (terminal.has(run.status)) fail('assistant_run_closed', 'This request has finished');
           if (['contribute', 'resolve'].includes(input.action)) {
             if (!isHuman) fail('assistant_denied', 'Shared inputs preserve human authorship', 403);
@@ -214,15 +223,16 @@ export class RoomAssistant {
             run.status = run.attemptId ? 'resume_requested' : 'queued';
           } else if (['pause', 'cancel'].includes(input.action)) {
             if (!isHuman || (!isOwner && actor.id !== run.initiatorId)) fail('assistant_denied', 'The requester or owner controls this request', 403);
+            if (input.action === 'pause' && run.status === 'cancel_requested')
+              fail('assistant_stop_pending', 'Wait for the host to confirm stopping');
             if (input.action === 'cancel' && run.attemptId
               && (!Number.isFinite(run.hostReportedAt) || this.store.now() - run.hostReportedAt > hostStaleAfterMs)) {
-              // Independent stop: the host has gone silent, so no acknowledgment
-              // will come. The stop completes immediately and revokes the
-              // attempt; any late host report or publish is rejected by the
-              // SV-1 fence, so a stopped run can never publish afterwards.
+              // Revoke a silent host's publication rights immediately. This
+              // does not establish that its external execution has stopped.
               run.status = 'cancelled';
               run.attemptId = null;
-              run.activity.push({ at: this.store.now(), memberId: actor.id, kind: 'stopped', summary: 'Stopped; the host had gone silent and its attempt was revoked.' });
+              run.stopOutcome = 'attempt_revoked';
+              run.activity.push({ at: this.store.now(), memberId: actor.id, kind: 'attempt_revoked', summary: 'Host disconnected; publication was revoked, but execution could not be confirmed stopped.' });
               run.activity = run.activity.slice(-100);
             } else {
               run.status = run.attemptId ? input.action === 'pause' ? 'pause_requested' : 'cancel_requested' : input.action === 'pause' ? 'paused' : 'cancelled';
