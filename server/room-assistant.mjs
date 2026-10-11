@@ -1,4 +1,4 @@
-import { enforceAutonomyTierForAction } from './autonomy-tiers.mjs';
+import { enforceAutonomyTierForAction, getTier } from './autonomy-tiers.mjs';
 import { validId, messageChannelId, MAX_MESSAGE_BODY_CHARS } from '../src/events.js';
 import { conversationIndex } from '../src/conversation.js';
 import { isGuestAgentMemberId } from './guest-agent-links.mjs';
@@ -221,7 +221,8 @@ export class RoomAssistant {
             if (!isHuman || (!isOwner && actor.id !== run.initiatorId)) fail('assistant_denied', 'The requester or owner resumes this request', 403);
             if (run.status !== 'paused') fail('assistant_not_paused', 'Wait for the host to confirm pausing before resuming');
             const coordinator = state.members[config.coordinatorMemberId];
-            if (!coordinator?.active || !coordinator.permissions.includes('accept_work') || run.coordinatorMemberId !== config.coordinatorMemberId)
+            if (!coordinator?.active || !coordinator.permissions.includes('accept_work') || run.coordinatorMemberId !== config.coordinatorMemberId
+              || run.coordinatorMemberId !== state.room.ownerId && getTier(this.store.db, roomId, run.coordinatorMemberId)?.autonomyTier === 't1_readonly')
               fail('assistant_not_connected', 'Reconnect the original authorized assistant before resuming');
             run.status = run.attemptId ? 'resume_requested' : 'queued';
           } else if (['pause', 'cancel'].includes(input.action)) {
@@ -241,10 +242,17 @@ export class RoomAssistant {
               run.status = run.attemptId ? input.action === 'pause' ? 'pause_requested' : 'cancel_requested' : input.action === 'pause' ? 'paused' : 'cancelled';
             }
           } else {
+            // Revoked execution authority must not prevent the exact reserved
+            // host from confirming an already requested stop. This exception
+            // cannot acknowledge inputs, publish a result, or resume execution.
+            const stopAck = input.action === 'report' && validId(input.attemptId) && run.attemptId === input.attemptId
+              && (run.status === 'cancel_requested' && ['cancelled', 'failed'].includes(input.state)
+                || run.status === 'pause_requested' && ['paused', 'cancelled', 'failed'].includes(input.state))
+              && input.appliedInputMessageIds === undefined && input.resultMessageId === undefined;
             if (actor.kind !== 'agent' || actor.id !== run.coordinatorMemberId
-              || !actor.permissions.includes('accept_work')
+              || !actor.permissions.includes('accept_work') && !stopAck
               || actor.id !== config.coordinatorMemberId && !(input.action === 'report' && ['paused', 'cancelled', 'failed'].includes(input.state))) fail('assistant_denied', 'Only the configured authorized coordinator reports its host', 403);
-            enforceAutonomyTierForAction({ db: this.store.db, roomId, state, actor, action: 'coordinate the shared assistant' });
+            if (!stopAck) enforceAutonomyTierForAction({ db: this.store.db, roomId, state, actor, action: 'coordinate the shared assistant' });
             if ((input.action === 'claim' || input.action === 'publish' || input.action === 'draft' || input.state === 'working') && this.store.wakeQueue.pauseStatus(roomId, actor.id)) fail('assistant_host_paused', 'This coordinator is paused');
             if (!validId(input.attemptId)) fail('invalid_assistant_action', 'Choose a stable execution attempt', 422);
             if (input.action === 'draft') {

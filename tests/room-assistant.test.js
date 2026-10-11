@@ -567,3 +567,22 @@ test('R36-2: resume is refused up front when the coordinator was demoted to read
   demoteToReadonly(f.store.db, 'commons', 'producer', { updatedBy: 'owner' });
   await api('owner',{action:'resume',runId:'r36-resume',expectedRevision:3}, 409);
 });
+
+
+test('demoted Stop acknowledgment is exact-attempt and cannot acknowledge inputs or keep working', async t => {
+  const { f, api } = await setup(t);
+  await r36Paused(api, 'restricted-stop');
+  demoteToReadonly(f.store.db, 'commons', 'producer', { updatedBy: 'owner' });
+  const report={action:'report',runId:'restricted-stop',attemptId:'original',expectedRevision:1,state:'cancelled',summary:'Stopped.'};
+  await api('producer',report,403);
+  await api('owner',{action:'pause',runId:'restricted-stop',expectedRevision:1});
+  await api('producer',{...report,expectedRevision:2,attemptId:'foreign'},403);
+  await api('producer',{...report,expectedRevision:2,state:'working'},403);
+  await api('producer',{...report,expectedRevision:2,state:'paused',appliedInputMessageIds:['test-welcome']},403);
+  await api('producer',{...report,expectedRevision:2,state:'paused',resultMessageId:'test-welcome'},403);
+  await api('producer',{action:'draft',runId:'restricted-stop',attemptId:'original',expectedRevision:2,sequence:1,body:'Must not stream'},403);
+  const paused=await api('producer',{...report,expectedRevision:2,state:'paused'});
+  assert.equal(paused.result.status,'paused');
+  assert.equal(paused.result.inputs[0].status,'pending');
+  await api('owner',{action:'resume',runId:'restricted-stop',expectedRevision:3},409);
+});
