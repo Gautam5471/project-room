@@ -143,6 +143,7 @@
     "scripts/auth-journeys-browser-check.mjs": 16969,
     "scripts/invite-signup-browser-check.mjs": 4709,
     "scripts/guest-upgrade-browser-check.mjs": 4817,
-    "scripts/oauth-return-invite-browser-check.mjs": 2733
+    "scripts/oauth-return-invite-browser-check.mjs": 2733,
+    "scripts/selfhost-onboarding-browser-check.mjs": 2749
   }
 }

@@ -13,27 +13,42 @@ Install Git and Node **24.19 or newer**, then:
 git clone https://github.com/Uuriko/project-room.git
 cd project-room
 npm ci
-npm run provision -- --init --room commons --member owner --account local-owner --key-file .data/owner.key
 npm start
 ```
 
-Open http://127.0.0.1:4173/?room=commons. Choose **More options → Room key**,
-enter the value from `.data/owner.key`, and select **Enter room**. Read the file
-privately; do not paste it
-into an issue, URL or shared log. The database is `.data/room.sqlite`; restarting
-`npm start` preserves it. The key expires after seven days. Re-running provisioning
-**without `--init`** rotates it and ends previous room sessions:
-
-```sh
-npm run provision -- --room commons --member owner --key-file .data/owner.key
-```
+Open http://127.0.0.1:4173/ and choose **Create account**. Enter an email
+address and password. The local service creates your account and first room;
+no provisioning command or hosted account is needed. Use **Log in** on return.
+The database is `.data/room.sqlite`; restarting `npm start` preserves it.
 
 Use the room's invitation UI to bring in people, and Add agent or
 [the agent quickstart](AGENT-QUICKSTART.md) for a running external agent host.
 Provisioning an agent name alone does not start a model. Google sign-in requires
-operator OAuth configuration; it is not required for the local key-based flow.
+operator OAuth configuration; it is not required for email/password signup.
+Without a configured mailer, local email-verification gates are relaxed and
+email delivery and password-reset mail are unavailable. Configure and verify
+these services before public hosting; local signup is not proof of email ownership.
 Email Inbox examples are fixture-only; see [UNIFIED-INBOX.md](history/UNIFIED-INBOX.md)
 for provider-specific limitations. No model subscription is included.
+
+### Optional operator provisioning
+
+For a named room and an API credential, stop the server and run:
+
+```sh
+npm run provision -- --init --room commons --member owner --account local-owner --key-file .data/owner.key
+```
+
+This creates a separate operator identity; it does not attach the room to the
+email account you created above. The current browser sign-in page has no room-key
+entry field. Use this credential with the API, not as an email/password login.
+Read the file privately; never put it in an issue, URL or shared log. It expires
+after seven days. Re-running provisioning **without `--init`** rotates it and
+ends previous room sessions:
+
+```sh
+npm run provision -- --room commons --member owner --key-file .data/owner.key
+```
 
 The acceptance fixture is a disposable demo/test database. Do not use it as a
 persistent deployment or substitute it for these provisioning commands.

@@ -11,6 +11,14 @@ npm test                  # full unit suite (CI runs it sharded, plus browser/cl
 Build and maintain `Uuriko/project-room`. Read task-relevant code and docs;
 start with [docs/INDEX.md](docs/INDEX.md) when you need a map.
 
+## External contributors
+
+The hosted room and private maintainer coordination are not prerequisites for
+contributing. Use your fork, inspect overlapping public issues and PRs, follow
+[CONTRIBUTING.md](CONTRIBUTING.md), and submit a focused PR. The maintainer
+operating rules below describe shared-checkout and release work; they do not
+grant outside contributors production access or deployment authority.
+
 ## Essential rules
 
 1. **Act on existing authorization.** John has authorized Project Room pushes,
