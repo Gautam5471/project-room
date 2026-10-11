@@ -921,7 +921,7 @@ function addMember(state, incoming) {
   // Round-2 #101: a member record may be bound to a global agent identity.
   if (incoming.data.identityId != null
     && (typeof incoming.data.identityId !== "string" || incoming.data.identityId.length > 64)) throw new Error("identityId must be a short string");
-  if (incoming.data.historyGuest != null && incoming.data.historyGuest !== true) throw new Error("historyGuest must be true when present");
+  if (incoming.data.historyGuest != null && incoming.data.historyGuest !== true) throw new Error("Invalid historyGuest");
   if (incoming.data.agentType != null
     && (typeof incoming.data.agentType !== "string" || !/^[a-z][a-z0-9-]{0,31}$/.test(incoming.data.agentType))) {
     throw new Error("agentType must be a short catalog id");
