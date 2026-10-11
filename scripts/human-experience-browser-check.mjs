@@ -586,3 +586,42 @@ for (const [width, colorScheme] of [[1280, 'dark'], [390, 'light']]) {
     assert.deepEqual(errors, []);
   });
 }
+
+
+for (const width of [1280, 390]) test(`one shared answer streams in place and becomes the final result (${width})`, {timeout:30000}, async t => {
+  const f=createAcceptanceFixture(), server=createRoomServer({store:f.store,streamInterval:40});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const origin=`http://127.0.0.1:${server.address().port}`, browser=await chromium.launch({headless:true});
+  t.after(async()=>{await browser.close();server.closeStreams();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));f.store.close();rmSync(f.directory,{recursive:true,force:true});});
+  const api=async(actor,input)=>{
+    const res=await fetch(`${origin}/api/rooms/commons/assistant`,{method:'POST',headers:{authorization:`Bearer ${f.keys[actor]}`,'content-type':'application/json'},body:JSON.stringify({requestId:crypto.randomUUID(),...input})});
+    const value=await res.json();assert.equal(res.status,200,JSON.stringify(value));return value.result;
+  };
+  await api('owner',{action:'configure',expectedRevision:0,name:'Room',coordinatorMemberId:'producer'});
+  f.store.command(f.keys.owner,'commons',{id:crypto.randomUUID(),type:'message.posted',data:{messageId:'stream-ui',body:'Compare the options'}});
+  await api('owner',{action:'invoke',runId:'stream-ui-run',sourceMessageId:'stream-ui'});
+  await api('producer',{action:'claim',runId:'stream-ui-run',attemptId:'stream-ui-host',expectedRevision:0});
+  const page=await browser.newPage({viewport:{width,height:900}});await page.goto(origin);await signInFixture(page,f.keys.owner);
+  const answer=page.locator('#assistant-answer');
+  const emit=(sequence,body)=>api('producer',{action:'draft',runId:'stream-ui-run',attemptId:'stream-ui-host',expectedRevision:1,sequence,body});
+  await emit(1,'First finding <script>bad()</script>');
+  await answer.getByText('First finding <script>bad()</script>',{exact:true}).waitFor();
+  const node=await answer.elementHandle();
+  await page.locator('#assistant-face [data-cancel]').focus();
+  await page.evaluate(() => { const range=document.createRange(); range.setStart(document.querySelector('#assistant-answer').firstChild,0); range.setEnd(document.querySelector('#assistant-answer').firstChild,5); getSelection().removeAllRanges(); getSelection().addRange(range); });
+  await emit(2,'First finding <script>bad()</script> Second finding.');
+  await answer.getByText('First finding <script>bad()</script> Second finding.',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>getSelection().toString()),'First');
+  assert.equal(await node.evaluate(n=>n===document.querySelector('#assistant-answer')),true);
+  assert.equal(await page.locator('#assistant-face [data-cancel]').evaluate(n=>n===document.activeElement),true);
+  assert.equal(await answer.locator('script').count(),0);
+  assert.equal(await answer.isVisible(),true);
+  await api('producer',{action:'publish',runId:'stream-ui-run',attemptId:'stream-ui-host',expectedRevision:1,summary:'Ready',body:'The final shared answer.',appliedInputMessageIds:['stream-ui']});
+  await answer.waitFor({state:'hidden'});
+  assert.equal(await answer.textContent(),'');
+  await page.locator('#assistant-face').getByRole('button',{name:'Open result',exact:true}).click();
+  await page.locator('#message-list .message-body').getByText('The final shared answer.',{exact:true}).waitFor();
+  assert.equal(await node.evaluate(n=>n===document.querySelector('#assistant-answer')),true);
+  assert.equal(f.store.room('commons').state.messages.filter(m=>m.body==='The final shared answer.').length,1);
+  assert.equal(await page.locator('#assistant-activity').evaluate(n=>n.open),false);
+});

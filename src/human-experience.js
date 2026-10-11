@@ -38,7 +38,10 @@ export function installHumanExperience({ getState, getSession, client, notice, o
   const faceRequest = document.createElement('p'); faceRequest.className = 'assistant-face-request';
   const faceStatus = document.createElement('p'); faceStatus.className = 'assistant-face-status'; faceStatus.setAttribute('role', 'status'); faceStatus.setAttribute('aria-live', 'polite'); faceStatus.tabIndex = -1;
   const faceActions = document.createElement('div'); faceActions.className = 'assistant-face-actions';
-  face.append(faceRequest, faceStatus, faceActions);
+  const faceAnswer = document.createElement('p'); faceAnswer.id = 'assistant-answer'; faceAnswer.className = 'assistant-run-result';
+  faceAnswer.style.whiteSpace = 'pre-wrap'; faceAnswer.hidden = true;
+  const answerText = document.createTextNode(''); faceAnswer.append(answerText);
+  face.append(faceRequest, faceStatus, faceAnswer, faceActions);
   $('#assistant-activity').before(face);
   const faceButton = (label, data) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'text-button'; button.textContent = label; Object.assign(button.dataset, data); return button; };
   const ask = document.createElement('button'); ask.type = 'button'; ask.id = 'ask-room'; ask.className = 'button ghost';
@@ -127,6 +130,13 @@ export function installHumanExperience({ getState, getSession, client, notice, o
       }
     }
     if (current && faceStatus.dataset.faceStatus !== status.key) { faceStatus.dataset.faceStatus = status.key; faceStatus.textContent = status.text; }
+    const draft = current?.answerDraft?.attemptId === current?.attemptId && !CLOSED.includes(current?.status) ? current.answerDraft : null;
+    const answer = draft?.body ?? '';
+    // Keep one stable text node on the card; no per-token live announcements,
+    // HTML execution, extra timeline messages or forced scrolling.
+    if (answer.startsWith(answerText.data)) answerText.appendData(answer.slice(answerText.length));
+    else if (answerText.data !== answer) answerText.replaceData(0, answerText.length, answer);
+    faceAnswer.hidden = !answer;
     face.hidden = !current;
     if ($('#assistant-runs')._html !== runsHtml) {
       const panel = $('#assistant-runs'), focused = panel.contains(document.activeElement) ? document.activeElement : null;
@@ -147,7 +157,7 @@ export function installHumanExperience({ getState, getSession, client, notice, o
     }
   }
   async function refresh() {
-    if (!human() || !getState() || reading || document.hidden || Date.now() - lastRead < 1500) return;
+    if (!human() || !getState() || reading || document.hidden || Date.now() - lastRead < (projection?.runs?.some(run => run.status === 'working') ? 500 : 3000)) return;
     const stamp = key(); reading = true; lastRead = Date.now();
     try { const next = await client.request(path()); if (stamp !== key()) return; const changed = projection?.assistant.coordinatorMemberId !== next.assistant.coordinatorMemberId || projection?.assistant.name !== next.assistant.name; projection = next; paint(); if (changed) refreshTranscript(); }
     catch (failure) { if (stamp === key()) { error = failure.status === 404 ? uiText("human.copy.014") : failure.message; $('#assistant-error').textContent = error; } }
@@ -237,7 +247,7 @@ export function installHumanExperience({ getState, getSession, client, notice, o
     const button = event.target.closest('[data-result-draft]'); if (!button || resultEntry?.boundary !== key()) return;
     resultDialog.close(); selectResult(resultEntry.workId, button.dataset.resultDraft);
   };
-  setInterval(() => { void refresh(); }, 3000);
+  setInterval(() => { void refresh(); }, 500);
   return {
     assistantName(id) { return human() && !document.body.classList.contains('human-advanced') && projection?.assistant.coordinatorMemberId === id ? projection.assistant.name : null; },
     sync() {

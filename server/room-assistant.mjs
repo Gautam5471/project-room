@@ -23,6 +23,7 @@ const keys = {
   contribute: ['runId', 'sourceMessageId', 'expectedRevision', 'conflict'],
   resolve: ['runId', 'sourceMessageId', 'expectedRevision'],
   claim: ['runId', 'attemptId', 'expectedRevision'],
+  draft: ['runId', 'attemptId', 'expectedRevision', 'sequence', 'body'],
   report: ['runId', 'attemptId', 'expectedRevision', 'state', 'summary', 'resultMessageId', 'appliedInputMessageIds'],
   // publish is the SV-1 fence: the server posts the run's answer in the same
   // transaction that completes the run, so a stop that landed first rejects
@@ -74,6 +75,7 @@ export function invalidateEditedAssistantInput(db, roomId, messageId, at) {
   for (const row of rows) {
     const run = JSON.parse(row.value);
     for (const input of run.inputs) if (input.sourceMessageId === messageId) input.status = 'pending';
+    delete run.answerDraft;
     run.revision++;
     run.updatedAt = at;
     db.prepare('UPDATE room_assistant_runs SET value=? WHERE room_id=? AND run_id=?')
@@ -129,7 +131,7 @@ export class RoomAssistant {
       const isHuman = actor.kind === 'human';
       const floor = historyFloor(this.store.db, state, roomId, actor.id);
       const canonical = JSON.stringify(Object.fromEntries(Object.entries(input).sort(([a], [b]) => a.localeCompare(b))));
-      const old = this.store.db.prepare('SELECT input,result FROM room_assistant_ops WHERE room_id=? AND actor_id=? AND request_id=?').get(roomId, actor.id, input.requestId);
+      const old = input.action !== 'draft' && this.store.db.prepare('SELECT input,result FROM room_assistant_ops WHERE room_id=? AND actor_id=? AND request_id=?').get(roomId, actor.id, input.requestId);
       if (old) {
         if (old.input !== canonical) fail('assistant_retry_conflict', 'Retry ID already records different input');
         const response = JSON.parse(old.result);
@@ -170,6 +172,7 @@ export class RoomAssistant {
             if (terminal.has(pending.status)) continue;
             if (!pending.attemptId) pending.coordinatorMemberId = result.coordinatorMemberId;
             else if (!['paused', 'cancel_requested', 'needs_input'].includes(pending.status)) pending.status = 'pause_requested';
+            delete pending.answerDraft;
             pending.revision++;
             this.store.db.prepare('UPDATE room_assistant_runs SET value=? WHERE room_id=? AND run_id=?').run(JSON.stringify(pending), roomId, row.run_id);
           }
@@ -242,9 +245,26 @@ export class RoomAssistant {
               || !actor.permissions.includes('accept_work')
               || actor.id !== config.coordinatorMemberId && !(input.action === 'report' && ['paused', 'cancelled', 'failed'].includes(input.state))) fail('assistant_denied', 'Only the configured authorized coordinator reports its host', 403);
             enforceAutonomyTierForAction({ db: this.store.db, roomId, state, actor, action: 'coordinate the shared assistant' });
-            if ((input.action === 'claim' || input.action === 'publish' || input.state === 'working') && this.store.wakeQueue.pauseStatus(roomId, actor.id)) fail('assistant_host_paused', 'This coordinator is paused');
+            if ((input.action === 'claim' || input.action === 'publish' || input.action === 'draft' || input.state === 'working') && this.store.wakeQueue.pauseStatus(roomId, actor.id)) fail('assistant_host_paused', 'This coordinator is paused');
             if (!validId(input.attemptId)) fail('invalid_assistant_action', 'Choose a stable execution attempt', 422);
-            if (input.action === 'publish') {
+            if (input.action === 'draft') {
+              if (run.attemptId !== input.attemptId) fail('assistant_run_owned', 'Only the reserved host attempt may report');
+              if (run.status !== 'working') fail('assistant_stop_pending', 'A stop or scope decision must be acknowledged first');
+              if (!Number.isSafeInteger(input.sequence) || input.sequence < 1
+                || typeof input.body !== 'string' || !input.body.isWellFormed() || input.body.length > MAX_MESSAGE_BODY_CHARS)
+                fail('invalid_assistant_report', 'Report a bounded answer draft and positive sequence', 422);
+              const previous = run.answerDraft;
+              if (input.sequence <= (run.answerDraftSequence ?? previous?.sequence ?? 0)) {
+                if (!previous || input.sequence !== previous.sequence || input.body !== previous.body)
+                  fail('assistant_retry_conflict', 'Retry ID already records different input');
+              } else {
+                run.answerDraftSequence = input.sequence;
+                run.answerDraft = { attemptId: input.attemptId, sequence: input.sequence, body: input.body };
+              }
+              // Only the latest snapshot is retained. Token updates neither
+              // create ops/history rows nor invalidate human input revisions.
+              run.hostReportedAt = this.store.now();
+            } else if (input.action === 'publish') {
               // SV-1 publish fence, enforced in code: the server posts the
               // run's answer in the same transaction that completes the run.
               // The fence checks the reserved attempt, the run revision and
@@ -282,7 +302,7 @@ export class RoomAssistant {
             } else if (input.action === 'claim') {
               if (run.attemptId) fail('assistant_run_owned', 'This request already has an execution owner; reconcile that attempt');
               if (run.status !== 'queued') fail('assistant_not_queued', 'Resolve or resume the request before execution');
-              run.attemptId = input.attemptId; run.status = 'working'; run.hostReportedAt = this.store.now();
+              run.attemptId = input.attemptId; run.answerDraftSequence = 0; run.status = 'working'; run.hostReportedAt = this.store.now();
             } else {
               if (run.attemptId !== input.attemptId) fail('assistant_run_owned', 'Only the reserved host attempt may report');
               if (!['working', 'needs_input', 'paused', 'cancelled', 'done', 'failed'].includes(input.state)
@@ -313,14 +333,15 @@ export class RoomAssistant {
               run.activity = run.activity.slice(-100);
             }
           }
-          run.revision++;
+          if (input.action !== 'draft') run.revision++;
         }
+        if (input.action !== 'draft' && (run.status !== 'working' || ['contribute', 'resolve'].includes(input.action))) delete run.answerDraft;
         run.updatedAt = this.store.now();
         this.store.db.prepare('INSERT INTO room_assistant_runs VALUES(?,?,?) ON CONFLICT(room_id,run_id) DO UPDATE SET value=excluded.value').run(roomId, run.id, JSON.stringify(run));
         result = state.messages.find(m => m.id === run.sourceMessageId)?.deletedAt ? deletedControl(run) : run;
       }
       const response = { contractVersion: 1, roomId, action: input.action, result };
-      this.store.db.prepare('INSERT INTO room_assistant_ops VALUES(?,?,?,?,?)').run(roomId, actor.id, input.requestId, canonical, JSON.stringify(response));
+      if (input.action !== 'draft') this.store.db.prepare('INSERT INTO room_assistant_ops VALUES(?,?,?,?,?)').run(roomId, actor.id, input.requestId, canonical, JSON.stringify(response));
       return response;
     });
   }
