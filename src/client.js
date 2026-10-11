@@ -1,3 +1,4 @@
+import { uiText } from "./strings.js";
 import { verifyWorkResult } from "./work-packet.js";
 import { validateCharterRead } from "./room-charter.js";
 import { DM_CONSENT_REFUSAL_CODES } from "./dm-consents.js";
@@ -364,6 +365,9 @@ export class RoomClient {
       if (accountMode) this.accountOwnership = { client: accountClient, generation: accountGeneration, session: accountSession };
       await this.refresh();
       if (generation !== this.generation || this.session !== restored) return null;
+      // A 200 session proves we are signed in. Drop any stale "sign in required" line
+      // left by an earlier anonymous probe; the stream's open event then says Connected.
+      this.onStatus(uiText("connection.connecting"));
       this.connect(); return this.session;
     } catch (error) {
       if (generation !== this.generation) return null;

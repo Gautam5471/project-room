@@ -165,6 +165,7 @@ export default {
   "profile.failed": "Could not load the profile.",
   "profile.save_failed": "Could not save the profile.",
   "profile.close": "Close",
+  "connection.connecting": "Connecting to room service…",
   "room.session_ended": "Your session in that room ended. Open the room again from your room list to continue.",
   "profile.editing": "editing your profile",
   "file.download.action": "Download {filename}",
