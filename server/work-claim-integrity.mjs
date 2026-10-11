@@ -146,10 +146,13 @@ export async function readBoardDeployStatus(store, { fetchImpl, token, nowMs = D
   const cachedAt = cached.checkedAt ? Date.parse(cached.checkedAt) : NaN;
   const fresh = (flight && nowMs - flight.atMs < DEPLOY_STATUS_MAX_AGE_MS)
     || (Number.isFinite(cachedAt) && nowMs - cachedAt >= 0 && nowMs - cachedAt < DEPLOY_STATUS_MAX_AGE_MS);
-  if (fresh && !force) return { ...cached, stale: false };
+  // A reader inside the window after a failed read gets the same cached main
+  // that read fell back to; it stays stale unless the cache itself is fresh.
+  const cacheFresh = Number.isFinite(cachedAt) && nowMs - cachedAt >= 0 && nowMs - cachedAt < DEPLOY_STATUS_MAX_AGE_MS;
+  if (fresh && !force) return { ...cached, stale: !cacheFresh && flight?.stale === true };
   const entry = { atMs: nowMs, promise: null };
   entry.promise = readRoomDeployStatus(store, { fetchImpl, token, nowMs })
-    .then(status => ({ ...status, stale: false }))
+    .then(status => { entry.stale = status.stale === true; return { ...status, stale: entry.stale }; })
     .finally(() => { entry.promise = null; });
   statusFlights.set(key, entry);
   return entry.promise;

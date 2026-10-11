@@ -154,7 +154,7 @@ test("board columns, keyboard claim, linked work returns, chat line, 390px, and 
   await page.locator(".board-empty").waitFor();
   assert.equal(await page.locator(".board-empty").innerText(), "Claim work here so people and agents don't collide.");
   assert.equal(await page.locator("#board-new-item").count(), 1);
-  assert.match(await page.locator(".live-chip").innerText(), /Deploy status unknown|Live matches main|Live is behind main/);
+  assert.match(await page.locator(".live-chip").innerText(), /Deploy status unknown|Live matches main|Live differs from main|Live is behind main/);
   await page.locator("#board-new-item [name=title]").fill("Fix login copy");
   await page.locator("#board-new-item [name=files]").fill("src/board-ui.js");
   await page.locator("#board-new-item button[type=submit]").click();

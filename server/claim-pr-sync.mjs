@@ -832,7 +832,10 @@ export function readCachedDeployStatus(store) {
 // is not known yet.
 export async function readRoomDeployStatus(store, { fetchImpl = fetch, token = null, nowMs = Date.now(), repo = null } = {}) {
   const live = SOURCE_REVISION;
-  const fallback = readCachedDeployStatus(store);
+  // Every path that does not complete a fresh GitHub read returns the cached
+  // main marked stale: it can predate a deploy, and callers must not read a
+  // live-vs-main mismatch out of it.
+  const fallback = { ...readCachedDeployStatus(store), stale: true };
   if (readClaimPullBudget(store) > nowMs) return fallback;
   const repository = repo || process.env.GITHUB_REPOSITORY || "Uuriko/project-room";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) return fallback;
@@ -851,7 +854,7 @@ export async function readRoomDeployStatus(store, { fetchImpl = fetch, token = n
     if (limited.rateLimitedUntil) writeClaimPullBudget(store, limited.rateLimitedUntil, nowMs);
     return fallback;
   }
-  if (!response.ok) return { live, main: fallback.main, behind: fallback.behind, checkedAt: new Date(nowMs).toISOString() };
+  if (!response.ok) return { live, main: fallback.main, behind: fallback.behind, checkedAt: new Date(nowMs).toISOString(), stale: true };
   const read = await readJson(response);
   const sha = typeof read.body?.sha === "string" && SHA.test(read.body.sha) ? read.body.sha : null;
   const behind = sha && live === sha ? 0 : null;
