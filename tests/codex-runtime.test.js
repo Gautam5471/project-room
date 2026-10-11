@@ -167,3 +167,15 @@ test("final answer excludes commentary phase output", async t => {
   rpc.event("turn/completed", { threadId: "thread-one", turn: { id: "turn-one", status: "completed", items: [] } });
   assert.deepEqual(await executing, { body: "Only this is the answer" });
 });
+test("stream deltas use started item phase and exclude commentary and reasoning", async t => {
+  const { host, rpc, events } = setup(t, { complete: false });
+  const executing = host(input, { binding });
+  await waitUntil(() => rpc.calls.some(x => x.method === "turn/start"));
+  for (const [id, phase] of [["progress", "commentary"], ["answer", "final_answer"]]) {
+    rpc.event("item/started", { threadId: "thread-one", turnId: "turn-one", item: { id, type: "agentMessage", phase } });
+    rpc.event("item/agentMessage/delta", { threadId: "thread-one", turnId: "turn-one", itemId: id, delta: id });
+  }
+  rpc.event("item/reasoning/textDelta", { threadId: "thread-one", turnId: "turn-one", itemId: "thought", delta: "not public" });
+  rpc.finish(); await executing;
+  assert.deepEqual(events.filter(x => x.type === "answer_delta").map(x => [x.delta, x.phase]), [["answer", "final_answer"]]);
+});

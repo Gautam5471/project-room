@@ -6,11 +6,12 @@ import { RoomAgentClient } from "./room-agent.mjs";
 // experimental UI protocol. Transport is supplied by the operator's isolated
 // runtime integration: this module never launches processes or reads Codex HOME.
 export const CODEX_RUNTIME_PROTOCOL = "rust-v0.162.1";
+const connections = new WeakMap();
 const terminal = new Set(["completed", "interrupted", "failed"]);
 const fields = ["origin", "roomId", "memberId", "requestMessageId", "requestId", "attemptId", "roomCreatedEventId", "openingEventId"];
 const textInput = text => [{ type: "text", text, text_elements: [] }];
 const bindingFields = binding => binding?.kind === "shared-assistant"
-  ? ["origin", "roomId", "memberId", "runId", "attemptId", "roomCreatedAt", "runCreatedAt"] : fields;
+  ? ["origin", "roomId", "memberId", "runId", "attemptId", "roomCreatedAt", "runCreatedAt", ...(binding.continuationId ? ["continuationId"] : [])] : fields;
 const keyFor = binding => createHash("sha256").update(JSON.stringify([binding.kind ?? "addressed-request", ...bindingFields(binding).map(key => binding[key])])).digest("hex");
 
 // `rpc` implements request(method, params), notify(method, params), and
@@ -39,11 +40,13 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
     db.exec("ALTER TABLE codex_runtime_outputs ADD COLUMN phase TEXT");
   const get = id => db.prepare("SELECT * FROM codex_runtime_attempts WHERE id=?").get(id);
   const patch = (id, state) => db.prepare("UPDATE codex_runtime_attempts SET state=? WHERE id=?").run(state, id);
-  let initialized;
-  const ready = () => initialized ??= (async () => {
-    await rpc.request("initialize", { clientInfo: { name: "project_room", title: "Project Room", version: "0.1.0" } });
-    rpc.notify("initialized", {});
-  })();
+  const ready = () => {
+    if (!connections.has(rpc)) connections.set(rpc, (async () => {
+      await rpc.request("initialize", { clientInfo: { name: "project_room", title: "Project Room", version: "0.1.0" } });
+      rpc.notify("initialized", {});
+    })());
+    return connections.get(rpc);
+  };
   const checked = async (binding, action) => {
     if (!bindingFields(binding).every(key => typeof binding?.[key] === "string" && binding[key])
       || ["origin", "roomId", "memberId"].some(key => binding[key] !== scope[key]))
@@ -72,7 +75,8 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
   };
   const reconcile = async binding => {
     const id = await checked(binding, "read"), saved = get(id);
-    if (!saved?.thread_id || !saved.turn_id) throw new Error("Runtime start is uncertain; do not start another turn");
+    if (!saved) return { status: "not_started" };
+    if (!saved.thread_id || !saved.turn_id) throw new Error("Runtime start is uncertain; do not start another turn");
     await ready();
     const value = await rpc.request("thread/read", { threadId: saved.thread_id, includeTurns: true });
     if (value?.thread?.id !== saved.thread_id) throw new Error("Runtime returned a different thread");
@@ -109,9 +113,19 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
     db.prepare("UPDATE codex_runtime_inputs SET state='received' WHERE attempt_id=? AND input_id=?").run(id, inputId);
     return { status: "received" }; // Never infer that the model applied it.
   };
-  const execute = async (input, { binding } = {}) => {
+  const execute = async (input, { binding, previousBinding } = {}) => {
     const id = await checked(binding, "start");
     if (get(id)) throw new Error("Runtime attempt already exists; reconcile instead of rerunning");
+    let previous;
+    if (previousBinding) {
+      if (binding.kind !== "shared-assistant" || previousBinding.kind !== binding.kind || !binding.continuationId
+        || ["origin", "roomId", "memberId", "runId", "attemptId", "roomCreatedAt", "runCreatedAt"].some(key => binding[key] !== previousBinding[key]))
+        throw new Error("Continuation must retain the exact Room execution binding");
+      previous = get(await checked(previousBinding, "read"));
+      if (!["completed", "interrupted"].includes(previous?.state) || !previous.thread_id || !previous.turn_id
+        || previous.state === "interrupted" && input.continuation?.previousTurnStatus !== "interrupted")
+        throw new Error("Only a known completed or explicitly interrupted turn can continue");
+    } else if (binding.continuationId) throw new Error("Continuation needs its original completed turn");
     const cleanInput = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "signal"));
     if (binding.kind === "shared-assistant" && (input.run?.id !== binding.runId || !Array.isArray(input.inputs)))
       throw new Error("Shared runtime input does not match its run");
@@ -120,7 +134,10 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
       : createHostEnvelope(cleanInput);
     await ready(); input.signal?.throwIfAborted();
     db.prepare("INSERT INTO codex_runtime_attempts(id,binding,state) VALUES(?,?,'starting')").run(id, JSON.stringify(binding));
-    const started = await rpc.request("thread/start", { cwd, ...selectedPolicy });
+    const started = previous
+      ? await rpc.request("thread/resume", { threadId: previous.thread_id, cwd, ...selectedPolicy })
+      : await rpc.request("thread/start", { cwd, ...selectedPolicy });
+    if (previous && started?.thread?.id !== previous.thread_id) throw new Error("Continuation returned a different thread");
     if (typeof started?.thread?.id !== "string" || !started.thread.id) throw new Error("Runtime thread start is unconfirmed");
     db.prepare("UPDATE codex_runtime_attempts SET thread_id=? WHERE id=?").run(started.thread.id, id);
     input.signal?.throwIfAborted();
@@ -139,9 +156,13 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
           const result = recordTurn(id, params.turn);
           if (result.status === "completed") finish({ body: result.body });
           else fail(new Error(`Runtime turn ${result.status}`));
-        } else if (event.method === "item/completed") saveItem(id, params.item);
-        else if (event.method === "item/agentMessage/delta") emit({ type: "answer_delta", requestId: binding.requestId ?? binding.runId,
-          attemptId: binding.attemptId, itemId: params.itemId, delta: params.delta });
+        } else if (event.method === "item/started" && params.item?.type === "agentMessage") saveItem(id, { ...params.item, text: params.item.text ?? "" });
+        else if (event.method === "item/completed") saveItem(id, params.item);
+        else if (event.method === "item/agentMessage/delta") {
+          const phase = params.phase ?? db.prepare("SELECT phase FROM codex_runtime_outputs WHERE attempt_id=? AND item_id=?").get(id, params.itemId)?.phase ?? null;
+          if (phase === null || phase === "final_answer") emit({ type: "answer_delta", requestId: binding.requestId ?? binding.runId,
+            attemptId: binding.attemptId, itemId: params.itemId, delta: params.delta, phase });
+        }
       } catch (error) { fail(error); }
     };
     const unsubscribe = rpc.subscribe(receive);
@@ -151,6 +172,8 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
     // Attach rejection handler before awaiting turn/start (notifications may race).
     completed.catch(() => {});
     try {
+      await checked(binding, "start");
+      input.signal?.throwIfAborted();
       const value = await rpc.request("turn/start", { threadId: started.thread.id, input: textInput(JSON.stringify(envelope)) });
       recordTurn(id, value?.turn);
       for (const event of early) receive(event);
