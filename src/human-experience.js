@@ -129,7 +129,7 @@ export function installHumanExperience({ getState, getSession, client, notice, o
         resultMessage?.body ? ["<p class=\"assistant-run-result\"><strong>", uiText("human.askResult"), "</strong> ", esc(resultMessage.body.slice(0,400)), "</p>"].join('') : '',
         (sourceDeleted ? [] : run.activity ?? []).slice(-5).map(a => `<p>${esc(a.summary)}</p>`).join(''),
         inputs,
-        editable ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">Add context</button>"].join('') : '',
+        editable ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">", uiText("human.addToThisAsk"), "</button>"].join('') : '',
         editable && run.status !== 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-conflict=\"true\" data-revision=\"", run.revision, "\">Change direction</button>"].join('') : '',
         controls && !sourceDeleted && run.status === 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-resolve=\"true\" data-revision=\"", run.revision, "\">Resolve direction</button>"].join('') : '',
         "</div></details>"].join('');
@@ -146,7 +146,7 @@ export function installHumanExperience({ getState, getSession, client, notice, o
       if (current) {
         faceRequest.textContent = faceSource?.body?.slice(0, 120) || uiText('human.face.sharedRequest');
         if (current.resultMessageId) faceActions.append(faceButton(uiText('human.face.openResult'), { assistantMessage: current.resultMessageId }));
-        if (!CLOSED.includes(current.status) && !['cancel_requested', 'needs_input'].includes(current.status)) faceActions.append(faceButton(uiText('human.face.addContext'), { contributeRun: current.id, revision: String(current.revision) }));
+        if (!CLOSED.includes(current.status) && !['cancel_requested', 'needs_input'].includes(current.status)) faceActions.append(faceButton(uiText('human.addToThisAsk'), { contributeRun: current.id, revision: String(current.revision) }));
         if (faceControls && !CLOSED.includes(current.status)) faceActions.insertAdjacentHTML('beforeend', uiText('human.stopRequest', { runId: esc(current.id), revision: current.revision }));
         // R5-1: keep keyboard focus on the same control (or the card) across a repaint.
         if (focusedData) ([...faceActions.querySelectorAll('button')].find(button => button.dataset.pauseRun === focusedData.pauseRun && button.dataset.cancel === focusedData.cancel && button.dataset.contributeRun === focusedData.contributeRun) || faceStatus).focus({ preventScroll: true });
@@ -173,7 +173,7 @@ export function installHumanExperience({ getState, getSession, client, notice, o
     const scoped = getContribution?.();
     if (scoped) {
       contribution = { action: scoped.action, runId: scoped.runId, expectedRevision: scoped.expectedRevision, ...(scoped.action === 'resolve' ? {} : { conflict: scoped.conflict }) };
-      selected = true; ask.textContent = scoped.action === 'resolve' ? 'Resolve direction' : scoped.conflict ? 'Change direction' : 'Add context';
+      selected = true; ask.textContent = scoped.action === 'resolve' ? 'Resolve direction' : scoped.conflict ? 'Change direction' : uiText('human.addingToAsk', { name: getState().members[(projection?.runs ?? []).find(r => r.id === scoped.runId)?.initiatorId]?.displayName || 'this' });
       ask.setAttribute('aria-pressed', 'true');
     } else if (contribution) {
       contribution = null; selected = false; ask.textContent = 'Ask Room'; ask.setAttribute('aria-pressed', 'false');
