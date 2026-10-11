@@ -445,6 +445,21 @@ export function planAccountDeletion(store, accountId) {
   };
 }
 
+function deactivateBoundMembers(store, accountId) {
+  for (const { room_id: roomId, member_id: memberId } of memberBindings(store, accountId)) {
+    const state = store.room(roomId).state;
+    const member = state.members?.[memberId];
+    if (!member || member.active === false || isRoomArchived(state)) continue;
+    if (store.roomAuthority(roomId).ownerId === memberId) continue;
+    const key = store.issueAccessKey(roomId, memberId, 60000, accountId);
+    store.command(key, roomId, {
+      id: `account-delete-leave-${createHash("sha256").update(`${roomId}:${memberId}:${accountId}`).digest("hex").slice(0, 32)}`,
+      type: EVENT_TYPES.MEMBER_ACCESS_CHANGED,
+      data: { memberId, expectedMemberRevision: member.revision, permissions: member.permissions, active: false },
+    });
+  }
+}
+
 // One purge executor per inventory category. Each returns the number of
 // rows removed. The "profile" step runs last (planner priority 100): it
 // scrubs the account row and deactivates it, which also retires any
@@ -474,8 +489,15 @@ const EXECUTORS = {
   },
   passkeys: (store, accountId) =>
     store.db.prepare("DELETE FROM account_passkey_credentials WHERE account_id=?").run(accountId).changes,
-  memberships: (store, accountId) =>
-    store.db.prepare("DELETE FROM member_accounts WHERE account_id=?").run(accountId).changes,
+  // bug-deleted-account-member-stays-active-20261010: dropping the binding
+  // alone left the room member active, so the roster kept the deleted
+  // person and their display name stayed reserved. Each bound member is
+  // deactivated first, as a self-leave through the event-sourced path.
+  // Owners are skipped (owned_rooms archives or transfers those rooms).
+  memberships: (store, accountId) => {
+    deactivateBoundMembers(store, accountId);
+    return store.db.prepare("DELETE FROM member_accounts WHERE account_id=?").run(accountId).changes;
+  },
   connected_data: (store, accountId) => {
     let removed = 0;
     for (const table of ["gmail_mailboxes", "gmail_linked_mailboxes", "gmail_pending", "gmail_operations", "account_setup"]) {
