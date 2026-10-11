@@ -66,3 +66,23 @@ for (const [label, viewport, mobile] of [["phone 390", { width: 390, height: 844
     await page.locator("#message-list .message", { hasText: "latest note" }).last().locator("[data-message-action='save'][aria-pressed='true']").waitFor({ state: "attached" });
   });
 }
+
+// R60-1: your own message's menu now carries Edit and Delete (#2797), so on a
+// phone it is taller than the room above or below a message in the middle of
+// the timeline. It must still open with every action tappable (Edit and Delete
+// are last, so they were the ones hidden under the composer).
+test("own mid-timeline message's ⋯ menu is fully tappable (phone 390)", { timeout: 60000 }, async t => {
+  const page = await setup(t, { width: 390, height: 844 }, true);
+  for (let i = 1; i <= 10; i++) await post(page, `note ${i}`);
+  const target = page.locator("#message-list .message", { hasText: "note 6" }).last();
+  await page.evaluate(() => {
+    const timeline = document.querySelector(".timeline"), rows = [...document.querySelectorAll("#message-list .message")];
+    const row = rows.find(r => r.textContent.includes("note 6")), tl = timeline.getBoundingClientRect();
+    timeline.scrollTop += row.getBoundingClientRect().top - tl.top - tl.height / 2 + 20;
+  });
+  await target.locator("summary[aria-label^='More actions']").click();
+  await page.locator("details.message-more[open] .message-more-menu").waitFor({ state: "visible" });
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 150)));
+  assert.ok(await page.locator("details.message-more[open] [data-message-action='delete']").count(), "own message offers Delete");
+  assert.deepEqual(await blockedActions(page), [], "every action in the menu can be tapped");
+});
