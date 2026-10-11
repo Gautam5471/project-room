@@ -203,7 +203,10 @@ export function memberHistoryVisibility(state, memberId) {
   if (Array.isArray(member?.permissions) && member.permissions.includes("manage_members")) return "all";
   const setting = historyVisibility(state);
   if (setting.value) return setting.value;
-  return setting.guestsSinceJoin && isHistoryGuestMemberId(memberId) ? "since_join" : "all";
+  // An agent that joined through a guest share link keeps its identity id as
+  // its member id, so member.added records how it joined (historyGuest).
+  const historyGuest = isHistoryGuestMemberId(memberId) || member?.historyGuest === true;
+  return setting.guestsSinceJoin && historyGuest ? "since_join" : "all";
 }
 // --- end PRIV-2 ---
 
@@ -918,6 +921,7 @@ function addMember(state, incoming) {
   // Round-2 #101: a member record may be bound to a global agent identity.
   if (incoming.data.identityId != null
     && (typeof incoming.data.identityId !== "string" || incoming.data.identityId.length > 64)) throw new Error("identityId must be a short string");
+  if (incoming.data.historyGuest != null && incoming.data.historyGuest !== true) throw new Error("historyGuest must be true when present");
   if (incoming.data.agentType != null
     && (typeof incoming.data.agentType !== "string" || !/^[a-z][a-z0-9-]{0,31}$/.test(incoming.data.agentType))) {
     throw new Error("agentType must be a short catalog id");
@@ -953,6 +957,10 @@ function addMember(state, incoming) {
     // ACT-1a: Room Guide is an agent member the analytics path treats as system.
     // Omitted unless set, so older projections replay byte-identically.
     ...(incoming.data.system === true ? { system: true } : {}),
+    // priv-share-link-agent-reads-full-history: set when an agent joins through
+    // a guest share link. It reads like a link guest under the default history
+    // setting. Omitted otherwise so older projections replay byte-identically.
+    ...(incoming.data.historyGuest === true ? { historyGuest: true } : {}),
     accountableHumanId: incoming.data.accountableHumanId || (incoming.data.kind === "human" ? memberId : state.room.ownerId),
     permissions: [...incoming.data.permissions],
     // #643: explicit delegation marker. Set only when the owner granted

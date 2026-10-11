@@ -256,6 +256,9 @@ export class ShareLinks {
       const incoming = event({ id, idempotencyKey: id, roomId: row.room_id, actorId,
         type: T.MEMBER_ADDED, at: new Date(now).toISOString(), data: { memberId: identity.identityId,
           identityId: identity.identityId, displayName: displayName.trim(), kind: "agent", permissions: linkPermissions(this.accessOf(row)),
+          // A guest link admits the agent as a link guest: it reads from its join
+          // under the room's default history setting, like a human link guest.
+          ...(this.accessOf(row) === "guest" ? { historyGuest: true } : {}),
           authorityPolicyVersion: MEMBERSHIP_AUTHORITY_POLICY_VERSION } });
       const state = { ...applyEventWithGrowth(room.state, incoming, growthCollector).state, eventLog: [], seenEvents: {}, seenIdempotencyKeys: {} };
       const projection = this.store.storedProjection(row.room_id, state), sequence = room.sequence + 1;
