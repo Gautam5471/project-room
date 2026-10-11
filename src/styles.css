@@ -384,6 +384,7 @@ h3 { margin: .8rem 0 .45rem; font-size: 1.05rem; line-height: 1.3; letter-spacin
 .message-more-menu { position: absolute; right: 0; top: calc(100% + .25rem); z-index: 30; display: grid; gap: .1rem; min-width: 12rem; padding: .35rem; border: 1px solid var(--line); border-radius: .6rem; background: var(--panel-raised); box-shadow: var(--shadow); }
 /* Flipped upward by JavaScript when there isn't room below (near the composer). */
 .message-more-up .message-more-menu { top: auto; bottom: calc(100% + .25rem); }
+.message-more-start .message-more-menu { right: auto; left: 0; }
 .message-more-menu .message-to-work { padding: .5rem .6rem; text-align: left; font-size: .78rem; }
 .message-more[open] .message-more-menu .message-to-work { opacity: 1; }
 @media (hover: hover) and (pointer: fine) {
