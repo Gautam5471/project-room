@@ -505,6 +505,8 @@ export function installShareLinks({ client, accountClient, getState, getSession,
   $("#share-link-form").addEventListener("submit", async event => {
     event.preventDefault(); const version = managementVersion, generation = client.generation;
     if (!managementCurrent(version, generation)) return;
+    // The disabled button stops a native click, not a scripted or repeated submit.
+    if (creating) return;
     const request = pendingCreate ||= { requestId: crypto.randomUUID(), linkToken: newToken(),
       expiresAt: Date.now() + Number($("#share-link-expiry").value) * 3600000,
       maxJoins: Number($("#share-link-limit").value), expectedMemberRevision: getState().members[getSession().member.id].revision,
