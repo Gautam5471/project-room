@@ -61,5 +61,6 @@ for (const legacy of [false, true]) test(`configured Google sign-in starts on Wo
   const retry = await mf.dispatchFetch(origin + '/api/auth/google/start', {redirect: 'manual', headers: {'CF-Connecting-IP': '192.0.2.1'}});
   const rejected = await callback(new URL(retry.headers.get('Location')).searchParams.get('state'));
   assert.equal(rejected.headers.get('X-Room-Auth-Failure'), 'google_provider_rejected');
+  assert.equal(rejected.headers.get('X-Room-Auth-Diagnostic'), null);
  } finally { await mf.dispose(); }
 });
