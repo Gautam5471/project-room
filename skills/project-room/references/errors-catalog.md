@@ -515,6 +515,7 @@ response's own `hint`/`next` when it names something more specific.
 | `invalid_limit` | 422 | limit must be an integer 1..100 | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_link` | 422 | Choose a short guest name | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_link_access` | 422 | Choose guest, member or co_admin access | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
+| `invalid_listener_lease` | 422 | listenerId must match [A-Za-z0-9._-]{1,128}; roomId a non-empty string or null; ttlMs positive | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_live_status` | 422 | Supply an account. | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_login` | 422 | An account key and current session revision are required | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_login_method` | 422 | Unknown login method type | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
@@ -671,6 +672,7 @@ response's own `hint`/`next` when it names something more specific.
 | `invalid_usage_period` | 422 | Choose an optional number of days only | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_verify_request` | 422 | eventType, data, and signature are the accepted fields | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_wake` | 422 | Supply a queue key, intent, due time, max attempts and request ID. | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
+| `invalid_wake_claim` | 422 | fencingToken is required; limit must be 1..50 | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_wake_pause` | 422 | Supply a request ID and an optional short reason. | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_wake_poll` | 422 | hostId is required (1-128 chars, [A-Za-z0-9._-]) — one wake waiter per host | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
 | `invalid_wake_resume` | 422 | Supply a request ID. reason is optional. | fix+resend | Fix the refused fields named in the message; resend. Keep the same command id if the earlier send was uncertain. |
@@ -722,6 +724,7 @@ response's own `hint`/`next` when it names something more specific.
 | `link_access_denied` | 403 | Only the room creator can make member or co-admin links | no | room_check_access. Ask the owner for the missing permission. Do not retry the same call unchanged. |
 | `link_integrity_error` | 503 | Invitation link history requires operator reconciliation | no | No success is claimed. Reconcile before any retry. 5xx bodies carry errorId + fingerprint for the bug report. |
 | `link_unavailable` | 410 | This guest invite is not valid. | follow hint | Follow this error's hint and next steps. |
+| `listener_fenced` | 409 | A live listener lease holds this agent's wake queue — ack with its fencing token | no | Re-acquire the listener lease and use its fencing token; do not ack from a second listener. |
 | `login_method_exists` | 409 | This account already has a password; change it instead | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
 | `login_method_not_found` | 404 | Login method not found | re-list | Re-list the resource and use a current id. Do not guess ids. |
 | `magic_account_mismatch` | 409 | This browser is already signed in to a different account; sign out before using a magic link for another email | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
@@ -927,6 +930,7 @@ response's own `hint`/`next` when it names something more specific.
 | `stale_inbox_send` | 409 | Reply status changed. Check the existing attempt. | re-read | Re-read the current state; resend with the current revision. Do not silently rebase. |
 | `stale_inbox_source` | 409 | Source changed. Review the current version. | re-read | Re-read the current state; resend with the current revision. Do not silently rebase. |
 | `stale_invitation_revision` | 409 | Invitation changed; refresh before revoking it | re-read | Re-read the current state; resend with the current revision. Do not silently rebase. |
+| `stale_listener` | 409 | No live listener lease for this fencing token | re-read | Acquire a fresh listener lease and use its fencing token. |
 | `stale_member_revision` | 409 | Your room access changed; refresh first | re-read | Re-read the current state; resend with the current revision. Do not silently rebase. |
 | `stale_membership` | 409 | Current active membership required; ask a room owner to review access | re-read | Re-read the current state; resend with the current revision. Do not silently rebase. |
 | `stale_offer` | 409 | Offer changed; read it again | re-read | Re-read the current state; resend with the current revision. Do not silently rebase. |

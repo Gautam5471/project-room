@@ -22,36 +22,37 @@ const wakeable = (agentId = "ai_lease", hostId = "host-1") =>
   ({ agentId, hostId, mode: "pull-only" });
 
 function enqueue(hb, agentId, n, roomId = ROOM) {
-  for (let i = 0; i < n; i++) {
-    hb.enqueueWake({ agentId, kind: "mention", roomId, messageId: `m${i}` });
-  }
+  for (let i = 0; i < n; i++) hb.enqueueWake({ agentId, kind: "mention", roomId, messageId: `m${i}` });
 }
 
-test("a second listener is refused and the running listener is named", t => {
-  const { hb } = unit(t);
+// Heartbeat + one live lease held by listenerId.
+function leased(t, listenerId = "listener-a") {
+  const { hb, advance } = unit(t);
   hb.heartbeat(wakeable());
-  const a = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 60000 });
-  assert.equal(a.acquired, true);
-  assert.ok(typeof a.fencingToken === "string" && a.fencingToken.length > 0, "fencing token issued");
+  return { hb, advance, lease: hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId, ttlMs: 60000 }) };
+}
+
+const claim = (hb, token, limit = 5) =>
+  hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: token, limit });
+
+test("a second listener is refused and the running listener is named", t => {
+  const { hb } = leased(t);
   const b = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-b", ttlMs: 60000 });
   assert.equal(b.acquired, false, "second listener refused while the lease is live");
   assert.equal(b.activeListenerId, "listener-a", "refusal names the running listener");
 });
 
 test("the same listener renews its own lease and keeps its fencing token", t => {
-  const { hb, advance } = unit(t);
-  hb.heartbeat(wakeable());
-  const a1 = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 60000 });
+  const { hb, advance, lease } = leased(t);
+  assert.ok(lease.fencingToken.length > 0, "fencing token issued");
   advance(30000);
-  const a2 = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 60000 });
-  assert.equal(a2.acquired, true);
-  assert.equal(a2.fencingToken, a1.fencingToken, "renewal keeps the fencing token so in-flight acks stay valid");
+  const renewed = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 60000 });
+  assert.equal(renewed.acquired, true);
+  assert.equal(renewed.fencingToken, lease.fencingToken, "renewal keeps the token so in-flight acks stay valid");
 });
 
 test("an expired lease can be re-acquired by another listener", t => {
-  const { hb, advance } = unit(t);
-  hb.heartbeat(wakeable());
-  hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 60000 });
+  const { hb, advance } = leased(t);
   advance(60001);
   const b = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-b", ttlMs: 60000 });
   assert.equal(b.acquired, true, "expired lease is free for another listener");
@@ -59,66 +60,53 @@ test("an expired lease can be re-acquired by another listener", t => {
 });
 
 test("claimWakeBatch claims atomically; acks are fenced by the token", t => {
-  const { hb } = unit(t);
-  hb.heartbeat(wakeable());
+  const { hb, lease } = leased(t);
   enqueue(hb, "ai_lease", 3);
-  const lease = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 60000 });
-  const batch = hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: lease.fencingToken, limit: 2 });
+  const batch = claim(hb, lease.fencingToken, 2);
   assert.equal(batch.signals.length, 2, "batch claims the two oldest signals");
   assert.deepEqual(batch.signals.map(s => s.redelivered), [false, false], "first claim is not a redelivery");
-  // A wrong token cannot ack: single-listener fencing.
-  assert.throws(() => hb.ackWakes({ agentId: "ai_lease", signalIds: batch.signals.map(s => s.signalId), roomId: ROOM, fencingToken: "bogus" }),
+  const ids = batch.signals.map(s => s.signalId);
+  const ack = extra => ({ agentId: "ai_lease", signalIds: ids, roomId: ROOM, ...extra });
+  assert.throws(() => hb.ackWakes(ack({ fencingToken: "bogus" })),
     err => err instanceof HeartbeatError && err.status === 409 && err.code === "listener_fenced");
-  // A missing token cannot ack either while the lease is live.
-  assert.throws(() => hb.ackWakes({ agentId: "ai_lease", signalIds: batch.signals.map(s => s.signalId), roomId: ROOM }),
+  assert.throws(() => hb.ackWakes(ack()),
     err => err instanceof HeartbeatError && err.status === 409 && err.code === "listener_fenced");
-  const ok = hb.ackWakes({ agentId: "ai_lease", signalIds: batch.signals.map(s => s.signalId), roomId: ROOM, fencingToken: lease.fencingToken });
+  const ok = hb.ackWakes(ack({ fencingToken: lease.fencingToken }));
   assert.equal(ok.acknowledged.length, 2, "the fencing token holder drains the batch");
   assert.equal(hb.pendingWakes("ai_lease", { roomId: ROOM }).length, 1, "one signal left unclaimed");
 });
 
 test("a stale fencing token is rejected by claimWakeBatch", t => {
-  const { hb, advance } = unit(t);
-  hb.heartbeat(wakeable());
+  const { hb, advance, lease } = leased(t);
   enqueue(hb, "ai_lease", 1);
-  const a = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 60000 });
   advance(60001);
   const b = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-b", ttlMs: 60000 });
   assert.equal(b.acquired, true);
-  assert.throws(() => hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: a.fencingToken, limit: 5 }),
+  assert.throws(() => claim(hb, lease.fencingToken),
     err => err instanceof HeartbeatError && err.status === 409 && err.code === "stale_listener");
-  const batch = hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: b.fencingToken, limit: 5 });
-  assert.equal(batch.signals.length, 1);
+  assert.equal(claim(hb, b.fencingToken).signals.length, 1);
 });
 
 test("a dead listener's batch is redelivered with the flag set", t => {
-  const { hb, advance } = unit(t);
-  hb.heartbeat(wakeable());
+  const { hb, advance, lease } = leased(t);
   enqueue(hb, "ai_lease", 2);
-  const a = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 60000 });
-  const first = hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: a.fencingToken, limit: 5 });
+  const first = claim(hb, lease.fencingToken);
   assert.equal(first.signals.length, 2);
-  // Listener A dies mid-batch: lease lapses, nothing acked.
-  advance(60001);
+  advance(60001); // listener-a dies mid-batch: lease lapses, nothing acked.
   const b = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-b", ttlMs: 60000 });
-  assert.equal(b.acquired, true);
-  const redelivered = hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: b.fencingToken, limit: 5 });
+  const redelivered = claim(hb, b.fencingToken);
   assert.deepEqual(redelivered.signals.map(s => s.signalId).sort(), first.signals.map(s => s.signalId).sort(),
     "the same batch comes back");
   assert.deepEqual(redelivered.signals.map(s => s.redelivered), [true, true], "redelivery is flagged");
 });
 
 test("releaseListenerLease frees the batch for prompt redelivery", t => {
-  const { hb } = unit(t);
-  hb.heartbeat(wakeable());
+  const { hb, lease } = leased(t);
   enqueue(hb, "ai_lease", 1);
-  const a = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 60000 });
-  const first = hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: a.fencingToken, limit: 5 });
-  assert.equal(first.signals.length, 1);
-  const released = hb.releaseListenerLease({ agentId: "ai_lease", roomId: ROOM, fencingToken: a.fencingToken });
-  assert.equal(released.released, true);
+  const first = claim(hb, lease.fencingToken);
+  assert.equal(hb.releaseListenerLease({ agentId: "ai_lease", roomId: ROOM, fencingToken: lease.fencingToken }).released, true);
   const b = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-b", ttlMs: 60000 });
-  const again = hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: b.fencingToken, limit: 5 });
+  const again = claim(hb, b.fencingToken);
   assert.equal(again.signals.length, 1, "released claims are immediately reclaimable");
   assert.equal(again.signals[0].redelivered, true, "re-claim after release is flagged redelivered");
   assert.equal(again.signals[0].signalId, first.signals[0].signalId);
@@ -137,19 +125,17 @@ test("leases are room-scoped", t => {
   const { hb } = unit(t);
   hb.heartbeat(wakeable());
   const a = hb.acquireListenerLease({ agentId: "ai_lease", roomId: "room-one", listenerId: "listener-a", ttlMs: 60000 });
-  assert.equal(a.acquired, true);
   const b = hb.acquireListenerLease({ agentId: "ai_lease", roomId: "room-two", listenerId: "listener-b", ttlMs: 60000 });
-  assert.equal(b.acquired, true, "a different room gets its own lease");
+  assert.equal(a.acquired && b.acquired, true, "a different room gets its own lease");
   assert.notEqual(a.fencingToken, b.fencingToken);
 });
 
 test("lease inputs are validated", t => {
-  const { hb } = unit(t);
-  hb.heartbeat(wakeable());
+  const { hb } = leased(t);
   const bad = [
     () => hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "bad id!", ttlMs: 60000 }),
     () => hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 0 }),
-    () => hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: "x", limit: 0 }),
+    () => claim(hb, "x", 0),
   ];
   for (const fn of bad) assert.throws(fn, err => err instanceof HeartbeatError && err.status === 422);
 });
