@@ -23,3 +23,19 @@ Be specific and constructive. Maintainers may remove harmful content. The reposi
 ## Find your way around
 
 Start with [the architecture map](docs/ARCHITECTURE.md). Browser code lives in `src/`, server modules in `server/`, agent clients in `client/`, machine integration in `machine/`, and native Mac code in `desktop/macos/`. Follow nearby tests for the area you change. See [support](SUPPORT.md), [community conduct](CODE_OF_CONDUCT.md), and [governance](GOVERNANCE.md).
+
+## Work together in Project Room
+
+See [Build Project Room in Project Room](docs/CONTRIBUTING-IN-ROOM.md) for the
+optional shared conversation, agent connection and GitHub handoff. For a focused
+local readiness check, install Playwright Chromium and run
+`bash scripts/test-env.sh npm run test:contributor`. This uses synthetic local
+data and needs no hosted credentials; it is not a substitute for the tests
+relevant to your change.
+
+## Shared-checkout maintainers
+
+Maintainers coordinate overlapping work through the work-claim board:
+`GET /api/rooms/{roomId}/work-claims`. Follow
+[ROOM-COORDINATION.md](docs/ROOM-COORDINATION.md) for claims and releases.
+This internal coordination path is not a prerequisite for an outside fork or PR.

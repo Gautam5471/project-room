@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { RoomStore } from '../server/store.mjs';
 import { initialRoom } from '../server/bootstrap.mjs';
 import { createRoomServer } from '../server/http.mjs';
-test('real PR receiver is mounted, disabled by default and rejects unauthenticated deliveries', async t => {
+test('real PR receiver rejects unauthorized requests and links a signed PR exactly once', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'room-pr-receiver-'));
   const store = new RoomStore(join(directory, 'room.sqlite')); store.initialize(initialRoom());
   const server = createRoomServer({ store }); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -25,4 +25,41 @@ test('real PR receiver is mounted, disabled by default and rejects unauthenticat
   process.env.GITHUB_PR_WEBHOOK_SECRET='isolated-http-fixture'; assert.equal((await send('sha256='+'0'.repeat(64))).status,401);
   const signature = 'sha256='+createHmac('sha256','isolated-http-fixture').update(body).digest('hex');
   const response=await send(signature); assert.equal(response.status,200); assert.deepEqual(await response.json(),{ok:true,ignored:true});
+  // Exercise actual body reading, route dispatch and durable claim mutation.
+  // Direct-handler tests cannot detect a mounted route dropping this payload.
+  const origin = new URL(url).origin;
+  const token = store.issueAccessKey('commons', 'owner');
+  const call = async (path, data) => {
+    const result = await fetch(`${origin}/api/rooms/commons/work-claims${path}`, {
+      method: data === undefined ? 'GET' : 'POST',
+      headers: { Authorization: `Bearer ${token}`, Origin: origin, 'Content-Type': 'application/json' },
+      ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+    });
+    return { status: result.status, body: await result.json() };
+  };
+  assert.equal((await call('', { id: 'contributor-fix', repo: 'example/project', files: ['src/fix.js'] })).status, 201);
+  assert.equal((await call('/contributor-fix/claim', { leaseHours: 1 })).status, 200);
+  const payload = JSON.stringify({ action: 'opened', repository: { full_name: 'example/project' },
+    pull_request: { html_url: 'https://github.com/example/project/pull/7', number: 7,
+      head: { ref: 'contributor-fix' }, title: 'Fix the reported issue', body: 'claim: contributor-fix', state: 'open', merged: false } });
+  const prSignature = 'sha256=' + createHmac('sha256', 'isolated-http-fixture').update(payload).digest('hex');
+  const deliver = raw => fetch(url, { method: 'POST', headers: {
+    'Content-Type': 'application/json', 'X-GitHub-Event': 'pull_request', 'X-Hub-Signature-256': prSignature,
+  }, body: raw });
+  assert.equal((await deliver(payload + ' ')).status, 401, 'signature covers exact request bytes');
+  assert.equal((await call('/contributor-fix')).body.pullRequests.length, 0);
+  const accepted = await deliver(payload);
+  assert.equal(accepted.status, 200);
+  assert.equal((await accepted.json()).linked, 'contributor-fix');
+  const linked = await call('/contributor-fix');
+  assert.equal(linked.status, 200);
+  assert.equal(linked.body.pullRequests.length, 1);
+  assert.equal(linked.body.pullRequests[0].url, 'https://github.com/example/project/pull/7');
+  const repeated = await deliver(payload);
+  assert.equal(repeated.status, 200);
+  assert.equal((await repeated.json()).linked, null);
+  const replayed = await call('/contributor-fix');
+  assert.equal(replayed.body.pullRequests.length, 1, 'redelivery does not add another PR');
+  assert.equal(replayed.body.history.length, linked.body.history.length, 'redelivery does not add another claim update');
+
 });

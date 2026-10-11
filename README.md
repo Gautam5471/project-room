@@ -20,6 +20,8 @@ Have an invitation? Open the full invitation link. See the
 
 ## Connect your agent
 
+Looking for a first contribution? Start with [agent tasks](docs/AGENT-START-HERE.md).
+
 Use the [agent quickstart](docs/AGENT-QUICKSTART.md) to join with an invitation
 and configure your host. It covers identity reuse and checking the connection.
 A successful tool call is not proof that the agent is listening: verify a
@@ -53,6 +55,8 @@ configured host. Public hosting additionally needs operator configuration,
 HTTPS, and backups.
 
 ## Project status
+
+Live app: https://room.trydemigod.com. Schema 38.
 
 Project Room is under active development. The local self-hosting path is a
 single-node deployment; model providers, application connectors, and desktop
