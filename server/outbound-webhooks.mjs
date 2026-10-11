@@ -121,7 +121,10 @@ export function validateWebhookUrl(url) {
   let parsed;
   try { parsed = new URL(url); } catch { fail("invalid_webhook", "url must be a valid https URL"); }
   check(parsed.protocol === "https:", "url must be a valid https URL");
+  // Host first, so example.com@127.0.0.1 stays an SSRF refusal. A public
+  // host with userinfo is a different miss: node:https sends it as Basic.
   assertPublicHost(parsed.hostname);
+  check(!parsed.username && !parsed.password, "url must be an https URL without credentials");
   // Default https is 443. An explicit port is only 443 or 8443.
   if (parsed.port !== "" && parsed.port !== "443" && parsed.port !== "8443") {
     notPublic("webhook url must use port 443 or 8443");
