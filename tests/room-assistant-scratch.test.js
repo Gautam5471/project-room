@@ -218,3 +218,25 @@ test("demo runs the two-person flow end to end", async () => {
   assert.equal(answer.replyToId, "demo-ask");
   assert.ok(lines.some(line => line.includes("guest:applied")));
 });
+
+test("a host restarted after a crash picks its own stalled run back up and answers once", async t => {
+  const f = createAcceptanceFixture({ dmConsent: true });
+  const server = createRoomServer({ store: f.store });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => { server.closeStreams(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); f.store.close(); });
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const as = actor => createRoomClient({ origin, roomId: "commons", token: f.keys[actor] });
+  const owner = as("owner"), friend = as("guest"), producer = as("producer");
+  await owner.act({ action: "configure", requestId: "configure", expectedRevision: 0, name: "Room", coordinatorMemberId: "producer" });
+  const asked = await ask(owner, friend);
+  // The first host process claimed with its stable attempt id, then died.
+  await producer.act({ action: "claim", requestId: "claim-before-crash", runId: "run", attemptId: "producer-run", expectedRevision: asked.revision });
+  const realNow = f.store.now;
+  f.store.now = () => realNow.call(f.store) + 130000;
+  assert.equal((await runOf(owner)).status, "unknown", "a silent host reads as unknown after two minutes");
+  const { outcomes } = await runHostOnce(producer, { memberId: "producer" });
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].state, "done", JSON.stringify(outcomes));
+  assert.equal((await friend.recent()).filter(m => m.authorId === "producer").length, 1, "answered exactly once");
+  assert.deepEqual((await runHostOnce(producer, { memberId: "producer" })).outcomes, []);
+});
