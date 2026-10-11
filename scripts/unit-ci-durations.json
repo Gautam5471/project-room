@@ -594,6 +594,7 @@
   "tests/presence-states.test.js": 26973,
   "tests/presence.test.js": 21283,
   "tests/private-history-stream.test.js": 59410,
+  "tests/public-asset-content-types.test.js": 1672,
   "tests/probe-prod.test.js": 50572,
   "tests/prod-deploy-smoke.test.js": 122801,
   "tests/product200-d15-anchors.test.mjs": 1100,
