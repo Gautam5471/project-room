@@ -4628,6 +4628,10 @@ document.addEventListener("toggle", event => {
   const timeline = document.querySelector(".timeline")?.getBoundingClientRect();
   if (menu && menuOpensUp({ triggerTop: trigger.top, triggerBottom: trigger.bottom, menuHeight: menu.getBoundingClientRect().height + 4,
     limitTop: Math.max(0, timeline?.top ?? 0), limitBottom: Math.min(window.innerHeight, composer?.top ?? window.innerHeight) })) more.classList.add("message-more-up");
+  // On a phone the right-aligned menu can start left of the screen (R41-1):
+  // anchor it to the trigger's left edge instead.
+  more.classList.remove("message-more-start");
+  if (menu && menu.getBoundingClientRect().left < 0) more.classList.add("message-more-start");
 }, true);
 document.addEventListener("focusin", event => {
   for (const menu of document.querySelectorAll(".message-more[open]")) {
