@@ -179,3 +179,14 @@ test("stream deltas use started item phase and exclude commentary and reasoning"
   rpc.finish(); await executing;
   assert.deepEqual(events.filter(x => x.type === "answer_delta").map(x => [x.delta, x.phase]), [["answer", "final_answer"]]);
 });
+test("durable completed reconciliation keeps only final answer after disconnect", async t => {
+  const { host, rpc } = setup(t, { complete: false });
+  const executing = host(input, { binding });
+  await waitUntil(() => rpc.calls.some(x => x.method === "turn/start"));
+  rpc.event("item/completed", { threadId: "thread-one", turnId: "turn-one", item: { id: "progress", type: "agentMessage", phase: "commentary", text: "Checking" } });
+  rpc.event("turn/completed", { threadId: "thread-one", turn: { id: "turn-one", status: "completed", items: [{ id: "final", type: "agentMessage", phase: "final_answer", text: "Verified answer" }] } });
+  await executing;
+  rpc.request = async () => { throw new Error("Disconnected"); };
+  assert.deepEqual(await host.reconcile(binding), { status: "completed", body: "Verified answer" });
+  assert.deepEqual(await host.reconcile({ ...binding, attemptId: "another" }), { status: "not_started" });
+});

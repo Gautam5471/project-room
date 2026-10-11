@@ -313,3 +313,13 @@ test("coordinator demotion prevents a new continuation turn", async t => {
   await assert.rejects(f.run(), /read.only|autonomy|tier/i);
   assert.equal(f.calls.filter(x => x.method === "turn/start").length, 1);
 });
+test("observed failed turn remains failed if the transport disconnects immediately afterward", async t => {
+  const f = await setup(t, ({ finish }) => finish("failed"));
+  const request = f.rpc.request;
+  f.rpc.request = async (method, params) => {
+    if (method === "thread/read") throw new Error("Transport disconnected after terminal notification");
+    return request(method, params);
+  };
+  assert.equal((await f.run()).result.status, "failed");
+  assert.equal(f.calls.filter(x => x.method === "turn/start").length, 1);
+});

@@ -77,6 +77,10 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
     const id = await checked(binding, "read"), saved = get(id);
     if (!saved) return { status: "not_started" };
     if (!saved.thread_id || !saved.turn_id) throw new Error("Runtime start is uncertain; do not start another turn");
+    // Exact-bound terminal notifications are durable facts. A later transport
+    // loss must not erase them or require another provider request to prove them.
+    if (terminal.has(saved.state)) return { status: saved.state,
+      ...(saved.state === "completed" ? { body: saved.result } : {}) };
     await ready();
     const value = await rpc.request("thread/read", { threadId: saved.thread_id, includeTurns: true });
     if (value?.thread?.id !== saved.thread_id) throw new Error("Runtime returned a different thread");
