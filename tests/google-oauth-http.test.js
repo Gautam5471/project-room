@@ -168,6 +168,8 @@ test("callback with a state mismatch provisions no account", async t => {
   assert.equal(bad.status, 200);
   assert.match(await bad.text(), /url=\/\?google=error/);
   assert.equal(bad.headers.get("set-cookie") || "", "");
+  // Internal stage and schema hints stay in the server log, never on the response.
+  assert.equal(bad.headers.get("X-Room-Auth-Diagnostic"), null);
   assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM accounts WHERE id LIKE 'google:%'").get().n, 0);
 });
 
@@ -180,6 +182,7 @@ test("callback with a provider denial provisions no account", async t => {
     { redirect: "manual" });
   assert.equal(denied.status, 200);
   assert.match(await denied.text(), /url=\/\?google=error/);
+  assert.equal(denied.headers.get("X-Room-Auth-Diagnostic"), null);
   assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM accounts WHERE id LIKE 'google:%'").get().n, 0);
 });
 
