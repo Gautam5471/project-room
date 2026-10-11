@@ -563,7 +563,7 @@ export default {
       return finish(roomUnavailableResponse(request), 'durable-object');
     }
     const authFailure = response.headers.get('X-Room-Auth-Failure');
-    if (authFailure && /^[a-z][a-z0-9_]{0,63}$/.test(authFailure)) console.warn(`room authentication failed: ${authFailure}; ${response.headers.get("X-Room-Auth-Diagnostic") || ""}`);
+    if (authFailure && /^[a-z][a-z0-9_]{0,63}$/.test(authFailure)) console.warn(`room authentication failed: ${authFailure}`);
     return finish(response, 'durable-object');
   },
 
