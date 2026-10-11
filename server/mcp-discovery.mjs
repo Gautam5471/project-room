@@ -10,6 +10,7 @@ import { hostedMcpToolDefs } from "./mcp-hosted-tools.mjs";
 import { capabilityVisibleTo } from "./capability-visibility.mjs";
 import { withOpenWorldHint } from "./content-trust.mjs";
 import { LEAN_MCP_TOOLS, actionMetaToolDefs } from "./mcp-action-search.mjs";
+import { withMcpToolContract } from "./mcp-tool-contracts.mjs";
 
 export function livePublicMcpTools() {
   return [...MCP_JOIN_TOOLS, ...anonymousPublicWorkMcpTools, ...anonymousIdentityMintMcpTools].map(withOpenWorldHint);
@@ -62,7 +63,10 @@ export function listedMcpTools(profile = "core", aliases = false, agent = null, 
     ? hostedMcpToolDefs
     : CORE_MCP_TOOLS.map(name => hostedMcpToolDefs.find(entry => entry.name === name));
   const tools = source.map(entry => {
-    const description = (profile === "core" || profile === "lean") && CORE_MCP_BLURBS[entry.name] ? CORE_MCP_BLURBS[entry.name] : entry.description;
+    const base = (profile === "core" || profile === "lean") && CORE_MCP_BLURBS[entry.name] ? CORE_MCP_BLURBS[entry.name] : entry.description;
+    // Core and lean stay under their byte budget (tests/mcp-core-profile.test.js);
+    // the full profile carries the access/cost/REST line (AUX-08).
+    const description = profile === "full" ? withMcpToolContract(entry.name, base) : base;
     const alias = mcpToolAlias(entry.name);
     return {
       ...entry,
@@ -70,7 +74,8 @@ export function listedMcpTools(profile = "core", aliases = false, agent = null, 
       ...(aliases && alias ? { aliases: [alias] } : {})
     };
   });
-  const listed = [...tools, ...MCP_JOIN_TOOLS];
+  const joinTools = profile === "full" ? MCP_JOIN_TOOLS.map(entry => ({ ...entry, description: withMcpToolContract(entry.name, entry.description) })) : MCP_JOIN_TOOLS;
+  const listed = [...tools, ...joinTools];
   return [...(agent ? listed.filter(tool => capabilityVisibleTo(agent, tool)) : listed), ...(profile === "full" ? publicWorkMcpDefinitions : [])].map(withOpenWorldHint);
 }
 
