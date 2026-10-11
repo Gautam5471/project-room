@@ -1220,9 +1220,11 @@ export function createRoomServer({ store, origin, assetRoot = new URL("../", imp
           // provider bodies, emails, or arbitrary exception messages.
           const reason = /^[a-z][a-z0-9_]{0,63}$/.test(error?.code || "") ? error.code : "internal_error";
           const schema = /(?:no such (?:table|column): |(?:NOT NULL|UNIQUE) constraint failed: )([a-z_][a-z0-9_.]*)/i.exec(error?.message || "");
-          res.setHeader("X-Room-Auth-Diagnostic", `${stage}:${schema ? schema[0] : /FOREIGN KEY constraint failed|CHECK constraint failed|writer fence|writer version/i.exec(error?.message || "")?.[0] || (error?.name === "TypeError" ? "type_error" : "error")}`);
+          // The stage and schema hint stay in the server log. They never go on
+          // the browser response: table and column names are internal.
+          const diagnostic = `${stage}:${schema ? schema[0] : /FOREIGN KEY constraint failed|CHECK constraint failed|writer fence|writer version/i.exec(error?.message || "")?.[0] || (error?.name === "TypeError" ? "type_error" : "error")}`;
           res.setHeader("X-Room-Auth-Failure", reason);
-          console.warn(`google callback failed: ${reason}`);
+          console.warn(`google callback failed: ${reason}; ${diagnostic}`);
           return finishGoogle("/?google=error");
         }
       }
