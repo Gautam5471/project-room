@@ -7545,7 +7545,7 @@ $("#sidebar-toggle").addEventListener("click", () => {
   // hidden node is a silent no-op, so fall back to the first visible control.
   const sidebar = $("#room-sidebar"), shown = node => Boolean(node?.getClientRects().length);
   const active = sidebar.querySelector(".channel.is-active");
-  (shown(active) ? active : [...sidebar.querySelectorAll("button:not([disabled]), summary, a[href]")].find(shown))?.focus();
+  (shown(active) ? active : [...sidebar.querySelectorAll("button:not([disabled]),summary,a[href]")].find(shown))?.focus();
 });
 document.addEventListener("click", event => {
   const shell = $("#main");
