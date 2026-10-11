@@ -9,6 +9,7 @@ import { MCP_JOIN_TOOLS } from "./mcp-http.mjs";
 import { hostedMcpToolDefs } from "./mcp-hosted-tools.mjs";
 import { capabilityVisibleTo } from "./capability-visibility.mjs";
 import { withOpenWorldHint } from "./content-trust.mjs";
+import { LEAN_MCP_TOOLS, actionMetaToolDefs } from "./mcp-action-search.mjs";
 
 export function livePublicMcpTools() {
   return [...MCP_JOIN_TOOLS, ...anonymousPublicWorkMcpTools, ...anonymousIdentityMintMcpTools].map(withOpenWorldHint);
@@ -49,13 +50,19 @@ export function listedMcpTools(profile = "core", aliases = false, agent = null, 
   const outside = focus === "public_work" || (profile === "core" && focus === undefined && agent && !(agent.memberships ?? []).some(member => member.active !== false));
   if (outside) return [...MCP_JOIN_TOOLS, ...publicWorkMcpDefinitions].map(withOpenWorldHint);
   const focusedNames = focus === undefined ? null : new Set([...FOCUS_COMMON_TOOLS, ...MCP_TOOL_FOCUSES[focus]]);
+  // profile "lean" (opt-in): a short front door plus room_search_actions and
+  // room_run_action for the long tail. The meta tools are listed only here;
+  // they stay callable on every profile.
+  const leanDefs = [...hostedMcpToolDefs, ...actionMetaToolDefs];
   const source = focusedNames
     ? hostedMcpToolDefs.filter(entry => focusedNames.has(entry.name))
+    : profile === "lean"
+    ? LEAN_MCP_TOOLS.map(name => leanDefs.find(entry => entry.name === name))
     : profile === "full"
     ? hostedMcpToolDefs
     : CORE_MCP_TOOLS.map(name => hostedMcpToolDefs.find(entry => entry.name === name));
   const tools = source.map(entry => {
-    const description = profile === "core" && CORE_MCP_BLURBS[entry.name] ? CORE_MCP_BLURBS[entry.name] : entry.description;
+    const description = (profile === "core" || profile === "lean") && CORE_MCP_BLURBS[entry.name] ? CORE_MCP_BLURBS[entry.name] : entry.description;
     const alias = mcpToolAlias(entry.name);
     return {
       ...entry,
