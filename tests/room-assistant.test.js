@@ -401,6 +401,8 @@ test('deleted stop handles and historical receipts remain behind the original hi
   const claim={action:'claim',requestId:'old-claim',runId:'older-run',attemptId:'late-attempt',expectedRevision:0};
   await api('late-host',claim);
   command('room.history_visibility_set',{historyVisibility:'since_join'});
+  assert.equal((await api('late-host')).runs.length,0,'live pre-join source is outside the current history floor');
+  await api('late-host',claim,404);
   const response=await fetch(`${origin}/api/rooms/commons/commands`,{method:'POST',headers:{authorization:`Bearer ${f.keys.owner}`,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),type:'message.deleted',data:{messageId:'before-host',expectedMessageRevision:0}})});
   assert.equal(response.status,201,await response.text());
   assert.equal((await api('late-host')).runs.length,0,'reserved host does not gain access to pre-join source metadata');
