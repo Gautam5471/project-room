@@ -4397,7 +4397,9 @@ function applyEmoji(emoji) {
 function mentionChoices() {
   const input = $("#message-input"), found = mentionQuery(input.value, input.selectionStart);
   if (!found || !state) return [];
-  return mentionMatches(Object.values(state.members), found.query);
+  // In the human view the room assistant's seat reads as "Room" (as everywhere else), so @Room finds it.
+  const members = Object.values(state.members).map(m => { const name = humanExperience.assistantName(m.id); return name ? { ...m, displayName: name } : m; });
+  return mentionMatches(members, found.query);
 }
 function renderMentions() {
   const list = $("#mention-list");
@@ -4412,6 +4414,18 @@ function renderMentions() {
   const input = $("#message-input");
   input.removeAttribute("aria-expanded");
   input.setAttribute("aria-activedescendant", `mention-option-${mentionIndex}`);
+}
+// Choosing the assistant from the @ list is an Ask Room, not a plain mention.
+function chooseMention(member) {
+  const input = $("#message-input"), found = input && member ? mentionQuery(input.value, input.selectionStart) : null;
+  if (found && humanExperience.assistantName(member.id) && humanExperience.selectAsk()) {
+    const value = input.value, caret = input.selectionStart, before = value.slice(0, found.start).replace(/[ \t]+$/, ""), after = value.slice(caret).replace(/^[ \t]+/, "");
+    input.value = [before, after].filter(Boolean).join(" ");
+    const at = before ? before.length + (after ? 1 : 0) : 0;
+    hideMentions(); saveComposer(); syncRequestComposer(); input.focus(); input.setSelectionRange(at, at);
+    return;
+  }
+  applyMentionMember(member);
 }
 function applyMentionMember(member) {
   const input = $("#message-input");
@@ -4447,7 +4461,7 @@ $("#message-input").addEventListener("keydown", e => {
       renderMentions();
       return;
     }
-    if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); applyMentionMember(matches[mentionIndex]); return; }
+    if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); chooseMention(matches[mentionIndex]); return; }
   }
   const emojiChoice = emojiChoices();
   if (emojiChoice) {
@@ -4470,7 +4484,7 @@ $("#mention-list")?.addEventListener("mousedown", e => {
   const option = e.target.closest("[data-mention-id]");
   if (!option) return;
   e.preventDefault();
-  applyMentionMember(state.members[option.dataset.mentionId]);
+  chooseMention(state.members[option.dataset.mentionId]);
 });
 $("#emoji-list")?.addEventListener("mousedown", e => {
   const option = e.target.closest("[data-emoji]");
