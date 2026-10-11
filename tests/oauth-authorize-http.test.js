@@ -235,3 +235,20 @@ test("native desktop provider intent is bounded and preserves the exact generic 
     assert.equal(entrance.searchParams.get('provider'), provider);
   }
 });
+
+// Browsers apply CSP form-action to every redirect hop of the Allow POST, so the
+// consent page must list each hop's origin or the client never receives its code.
+const formActionOf = response => /(?:^|;)\s*form-action ([^;]*)/.exec(response.headers.get("content-security-policy"))[1].split(/\s+/);
+
+test("consent form-action allows the redirect hops Allow follows (Mac projectroom: and connector origin)", async t => {
+  const { origin, sent } = await startServer(t);
+  const session = await magicLogin(t, origin, sent);
+  const page = url => fetch(new URL(url, origin), { headers: { Cookie: "account_session=" + session.token } });
+  const start = await fetch(`${origin}/api/auth/desktop/start?state=${"s".repeat(43)}&challenge=${CHALLENGE}`, { redirect: "manual" });
+  const mac = formActionOf(await page(start.headers.get("location")));
+  assert.deepEqual(mac, ["'self'", "projectroom:"], "Mac chain ends at projectroom://auth");
+  const query = new URLSearchParams({ response_type: "code", client_id: CLIENT.clientId, redirect_uri: CLIENT.redirectUris[0],
+    scope: "rooms:read chat:read", code_challenge: CHALLENGE, code_challenge_method: "S256", state: "xyz" });
+  const connector = formActionOf(await page(`/oauth/authorize?${query}`));
+  assert.deepEqual(connector, ["'self'", "https://muse.ai"], "connector gets only its registered origin, no custom scheme");
+});
