@@ -544,11 +544,17 @@ details[open] > .section-summary::before { transform: rotate(45deg); }
 #connection-explanation { position: absolute; z-index: 15; top: 100%; right: 1rem; margin: .25rem 0 0; width: min(26rem, calc(100vw - 2rem)); padding: 1rem; border: 1px solid var(--line); border-radius: .75rem; background: var(--panel-raised); box-shadow: var(--shadow); line-height: 1.5; overflow-wrap: anywhere; }
 #people-hint:empty { display: none; }
 /* #662: owner "needs your attention" card. */
-.needs-attention { margin: 0 1rem .75rem; padding: .85rem 1rem; border: 1px solid var(--line); border-radius: .65rem; background: rgb(255 255 255 / 4%); }
+.needs-attention { margin: 0 1rem .5rem; padding: .6rem 1rem; border: 1px solid var(--line); border-radius: .65rem; background: rgb(255 255 255 / 4%); }
 .needs-attention[hidden] { display: none; }
 .attention-header { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .5rem; flex-wrap: wrap; }
 .attention-header h3 { margin: 0; font-size: 1rem; display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .attention-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem; border-radius: 50%; background: var(--accent, #d97706); color: #fff; font-size: .8rem; font-weight: 700; }
+.attention-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+/* The preview is a glance, not a reading surface: one ellipsized line per item so a long
+   room keeps its reading window. Open activity has the full text. */
+#activity-preview-list .rb-event-link { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#activity-preview-list .rb-actor, #activity-preview-list .rb-detail, #activity-preview-list time { display: inline; }
+#activity-preview-list time { margin: 0 .4rem; color: var(--muted); }
 .attention-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
 .attention-item { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: .75rem; padding: .6rem .75rem; border: 1px solid var(--line-soft); border-radius: .5rem; background: rgb(255 255 255 / 2%); }
 .attention-body { flex: 1 1 18rem; min-width: 0; }
