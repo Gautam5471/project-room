@@ -17,7 +17,7 @@ const ACTIONABLE = new Set(["unread", "read"]);
 export const UPDATE_KINDS = Object.freeze([
   "request", "mention", "dm", "review_requested", "handoff",
   "claim_lease_expiring", "claim_ci_failed", "claim_changes_requested",
-  "invite_pending", "access_request"
+  "invite_pending", "access_request", "agent_joined"
 ]);
 const CLAIM_ATTENTION = Object.freeze({
   lease_expiring: "claim_lease_expiring",
@@ -292,6 +292,29 @@ function projectRoom(store, roomId, memberId, identityId) {
   } catch (error) {
     if (!tableMissing(error)) throw error;
     flags.claims = true;
+  }
+
+  // An agent redeemed a one-time code this member minted. Private to the minter; the event
+  // is in the shared log, so the viewer check is here, not in the event.
+  try {
+    const rows = store.db.prepare(
+      `SELECT body FROM events WHERE room_id=? AND json_extract(body,'$.type')='member.added'
+         AND json_extract(body,'$.data.joinedVia')='one-time-code' AND json_extract(body,'$.data.referredBy')=? ORDER BY sequence DESC LIMIT 20`
+    ).all(roomId, memberId);
+    for (const row of rows) {
+      const event = JSON.parse(row.body), data = event.data ?? {};
+      const joined = state.members?.[data.memberId];
+      if (!joined || joined.active === false) continue;
+      const at = iso(event.at);
+      items.push(draft({
+        kind: "agent_joined", roomId, key: `joined|${data.memberId}`,
+        title: clip(`${joined.displayName} joined with a one-time code`), actor: data.memberId, createdAt: at, updatedAt: at,
+        basis: data.memberId, sourceRef: { memberId: data.memberId },
+        next: null
+      }));
+    }
+  } catch (error) {
+    if (!tableMissing(error)) throw error;
   }
 
   if (owner) {

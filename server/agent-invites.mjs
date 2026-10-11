@@ -367,6 +367,7 @@ export class AgentInvites {
           // Referral attribution: the invite minter is the referrer. The
           // member.added validator re-checks the shape and the self rule.
           referredBy: row.created_by,
+          joinedVia: "one-time-code",
         },
       });
       let state;
