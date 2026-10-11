@@ -569,9 +569,12 @@ export class AgentHeartbeats {
     const at = this.now();
     this.ensureListenerSchema();
     const placeholders = signalIds.map(() => "?").join(",");
-    const nested = this.db.isTransaction;
-    this.db.exec(nested ? "SAVEPOINT ack_wake_fence" : "BEGIN IMMEDIATE");
-    try {
+    // The store's own transaction runner owns the write lock: BEGIN IMMEDIATE on
+    // Node, transactionSync on a Durable Object (which rejects raw BEGIN,
+    // SAVEPOINT and COMMIT), and a join when the caller already holds one. The
+    // check and the UPDATE loop run under one lock, so a lease expiring or
+    // changing hands between them cannot let a stale ack through.
+    return this.store.transaction(() => {
       const holders = this.db.prepare(`SELECT DISTINCT l.fencing_token AS fencingToken
         FROM agent_wake_signals s
         JOIN agent_wake_listener_leases l
@@ -591,18 +594,8 @@ export class AgentHeartbeats {
         if (stmt.run(at, agentId, signalId, roomId, roomId).changes > 0) acknowledged.push(signalId);
       }
       acknowledged.push(...(this.store.workWakes?.ack(agentId, signalIds, roomId) ?? []));
-      this.db.exec(nested ? "RELEASE ack_wake_fence" : "COMMIT");
       return Object.freeze({ acknowledged: Object.freeze(acknowledged) });
-    } catch (error) {
-      if (this.db.isTransaction) {
-        try {
-          this.db.exec(nested
-            ? "ROLLBACK TO SAVEPOINT ack_wake_fence; RELEASE ack_wake_fence"
-            : "ROLLBACK");
-        } catch { /* already rolled back; the original error stands */ }
-      }
-      throw error;
-    }
+    });
   }
 
   // Idempotent DDL for the lease tables (no-op on warm databases).
