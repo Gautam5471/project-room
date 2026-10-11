@@ -14,10 +14,10 @@ import { randomUUID } from "node:crypto";
 import { EVENT_TYPES as T, historyVisibility, memberHistoryVisibility, isRoomArchived } from "../src/events.js";
 
 
-// Invite copy for link guests and guest-agent members. A v1 room hides
-// earlier messages from those guests until the owner chooses otherwise.
-// "since_join" hides them for every non-owner member. "all", and a legacy
-// room with no recorded default, still include earlier messages.
+// Invite copy for link guests and guest-agent members. Without an owner
+// choice, every room (v1 or older) hides earlier messages from those guests.
+// "since_join" hides them for every non-owner member. Only an explicit "all"
+// includes earlier messages.
 export function guestReadsHistoryFromJoin(room) {
   const setting = historyVisibility({ room });
   return setting.value === "since_join" || (setting.value === null && setting.guestsSinceJoin);

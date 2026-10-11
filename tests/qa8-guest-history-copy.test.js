@@ -20,7 +20,8 @@ test("guest link preview names since-join history when the room keeps the guest 
 
 test("full history is still promised where the guest will really see it", () => {
   assert.match(previewAccessText("guest", room("all")), /its history/);
-  assert.match(previewAccessText("guest", legacy), /its history/);
+  // Oct 10 2026: a legacy room (no historyDefaultsVersion) keeps the guest default too.
+  assert.match(previewAccessText("guest", legacy), /^Read messages posted after you join/);
   assert.match(previewAccessText("member", room(null)), /^Read and post/);
   assert.match(previewAccessText("member", room("since_join")), /after you join/);
   assert.match(previewAccessText("co_admin", room("since_join")), /^Every room permission/);

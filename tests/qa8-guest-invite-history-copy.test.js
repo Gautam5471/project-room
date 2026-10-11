@@ -19,11 +19,11 @@ test("guest history copy follows the room setting", () => {
   const sinceJoin = { historyVisibility: { value: "since_join", revision: 1 } };
   const all = { historyVisibility: { value: "all", revision: 1 }, historyDefaultsVersion: HISTORY_DEFAULTS_VERSION };
   assert.equal(guestReadsHistoryFromJoin(v1), true);
-  assert.equal(guestReadsHistoryFromJoin(legacy), false);
+  assert.equal(guestReadsHistoryFromJoin(legacy), true, "legacy rooms share the guest default (Oct 10 2026)");
   assert.equal(guestReadsHistoryFromJoin(sinceJoin), true);
   assert.equal(guestReadsHistoryFromJoin(all), false);
   assert.equal(guestHistoryAccessLead(v1), "Read messages posted after you join");
-  assert.equal(guestHistoryAccessLead(legacy), "Read the room and its history");
+  assert.equal(guestHistoryAccessLead(legacy), "Read messages posted after you join");
   assert.equal(guestHistoryAccessLead(sinceJoin), "Read messages posted after you join");
   assert.match(guestHistoryAccessLead(all), /its history/);
   assert.doesNotMatch(guestHistoryAccessLead(v1), /history/);
@@ -41,7 +41,9 @@ test("guest-agent preview uses the room, not a fixed history promise", () => {
   assert.match(hidden.access, /No membership administration/);
 
   const legacy = new GuestAgentLinks(roomFor({ id: "old", title: "Old" }));
-  const open = legacy.previewPublic({ room_id: "old", expires_at: 1 }, null);
+  assert.match(legacy.previewPublic({ room_id: "old", expires_at: 1 }, null).access, /^Read messages posted after you join, post messages, and react\./);
+  const chosenAll = new GuestAgentLinks(roomFor({ id: "old", title: "Old", historyVisibility: { value: "all", revision: 1 } }));
+  const open = chosenAll.previewPublic({ room_id: "old", expires_at: 1 }, null);
   assert.match(open.access, /Read the room and its history, post messages, and react\./);
   assert.match(open.access, new RegExp(TAIL.replace(".", "\\.")));
 });

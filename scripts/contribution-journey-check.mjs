@@ -24,6 +24,11 @@ for (const touch of [false, true]) test(`contribution journey ${touch ? "touch" 
   context.on("page", page => { page.setDefaultTimeout(8000); page.on("pageerror", error => errors.push(error.message)); });
   const state = () => f.store.room("commons").state;
   const send = (type, data) => f.store.command(f.keys.owner, "commons", { id: crypto.randomUUID(), type, data });
+  // This journey tests the contribution flow, not history. It pins "all" so it
+  // doesn't depend on the room's default. Since-join rooms have their own focus
+  // bug (bug-sincejoin-catchup-focus-steal-20261011): background activity moves
+  // focus to the return brief.
+  send("room.history_visibility_set", { historyVisibility: "all" });
   let page = await context.newPage();
   await page.goto(`${origin}/#join/${f.links.valid}`);
   await page.locator("#join-link-name").fill("Journey guest"); await page.locator("#join-link-submit").click();

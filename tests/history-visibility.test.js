@@ -160,7 +160,7 @@ test("the owner, membership admins and members who joined earlier keep their rea
   assert.doesNotThrow(() => auditRecovery(f.store));
 });
 
-test("new rooms start link guests and agent guests at their join; older rooms and explicit choices keep their setting", () => {
+test("new and older rooms start link guests and agent guests at their join; explicit choices keep their setting", () => {
   const at = "2026-10-03T12:00:00.000Z";
   const created = (data = {}) => [
     event({ type: T.ROOM_CREATED, actorId: "owner", roomId: "r1", at, data: { roomId: "r1", ownerId: "owner", title: "R", purpose: "P", ...data } }),
@@ -173,9 +173,13 @@ test("new rooms start link guests and agent guests at their join; older rooms an
   assert.equal(memberHistoryVisibility(fresh, "guest-agent-0123456789abcdef01234567"), "since_join");
   assert.equal(memberHistoryVisibility(fresh, "agent-1"), "all");
   assert.equal(memberHistoryVisibility(fresh, "owner"), "all");
-  // Rooms created before this shipped carry no version: everyone reads all.
+  // Rooms created before historyDefaultsVersion 1 get the same computed guest
+  // default (Potter, Oct 10 2026). Non-guest members still read all.
   const legacy = replay(created());
-  assert.equal(memberHistoryVisibility(legacy, linkGuest), "all");
+  assert.equal(historyVisibility(legacy).guestsSinceJoin, true);
+  assert.equal(memberHistoryVisibility(legacy, linkGuest), "since_join");
+  assert.equal(memberHistoryVisibility(legacy, "agent-1"), "all");
+  assert.equal(memberHistoryVisibility(legacy, "owner"), "all");
   assert.equal("historyVisibility" in legacy.room, false, "older logs replay without the new field");
   // The owner's explicit choice replaces the guest default.
   const chosen = replay([...created({ historyDefaultsVersion: 1 }),
