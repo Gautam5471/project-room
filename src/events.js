@@ -120,6 +120,8 @@ export const DEFAULT_CHANNEL_ID = "general";
 export const MAX_CHANNELS_PER_ROOM = 50;
 export const CHANNEL_NAME_PATTERN = /^[a-z0-9][a-z0-9-_]{0,47}$/;
 
+const JOINED_VIA_REFUSED = "invalid joinedVia";
+
 export function normalizeChannelName(name) {
   const normalized = typeof name === "string" ? name.trim().toLowerCase().replace(/\s+/g, "-") : "";
   if (!CHANNEL_NAME_PATTERN.test(normalized)) throw new Error("Channel name uses lowercase letters, numbers, dashes (1-48 chars)");
@@ -925,6 +927,9 @@ function addMember(state, incoming) {
   // Referral attribution: optional, validated, never self-referential. The
   // referrer must already be a member — checked at record time; the event
   // handler guards the shape so a corrupt log cannot forge it.
+  // Only the one-time agent code path stamps this (server/agent-invites.mjs). It lets the
+  // minter see "joined with a one-time code" in Updates; any other value is refused.
+  if (incoming.data.joinedVia != null && incoming.data.joinedVia !== "one-time-code") throw new Error(JOINED_VIA_REFUSED);
   if (incoming.data.referredBy != null) {
     if (typeof incoming.data.referredBy !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(incoming.data.referredBy)) {
       throw new Error("referredBy must be a member id");
