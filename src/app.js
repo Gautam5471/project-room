@@ -6743,6 +6743,8 @@ async function syncAttentionBadges() {
 // room topbar). The owner ops card keeps its own data source; this is the
 // personal activity view backed by activity_events.
 let previewItems = [], previewBusy = false;
+// Dismissed previews stay hidden for this page load; a newer unread item brings the card back.
+const previewDismissed = new Set();
 async function refreshActivityPreview() {
   if (!state || !session || previewBusy) return;
   const generation = client.generation, roomId = session.roomId;
@@ -6752,10 +6754,11 @@ async function refreshActivityPreview() {
     // E-H3: drop stale flights — the previous room's message excerpts must
     // never render into the new room's preview.
     if (!state || !session || !result || generation !== client.generation || session.roomId !== roomId) return;
-    previewItems = result.items.filter(item => !item.readAt).slice(0, 3);
+    previewItems = result.items.filter(item => !item.readAt && !previewDismissed.has(item.id)).slice(0, 3);
     $("#activity-preview").hidden = previewItems.length === 0;
     setText("#activity-preview-count", String(previewItems.length));
-    renderBriefList("#activity-preview-list", previewItems.map(item => {
+    // Glance only: the newest unread item shows; the count chip carries the rest and Open activity lists them.
+    renderBriefList("#activity-preview-list", previewItems.slice(0, 1).map(item => {
       const detail = item.messageDeleted ? "Message deleted" : (item.messageBody ?? "").slice(0, 100);
       const label = `${memberLabel(item.actorId)} ${ACTIVITY_LABELS[item.type] ?? item.type}`;
       return `<li class="rb-event activity-item unread">`
@@ -6767,6 +6770,10 @@ async function refreshActivityPreview() {
   finally { previewBusy = false; }
 }
 $("#activity-preview-open").addEventListener("click", openActivity);
+$("#activity-preview-dismiss").addEventListener("click", () => {
+  for (const item of previewItems) previewDismissed.add(item.id);
+  previewItems = []; $("#activity-preview").hidden = true; $("#activity-preview-list").replaceChildren();
+});
 function scheduleAttentionBadges() {
   // Throttled: snapshots fire on every room event, badges need not.
   const now = Date.now(), elapsed = now - activityBadgeAt;
