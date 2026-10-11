@@ -27,7 +27,7 @@ const post = (origin, path, data, extra = {}) => fetch(origin + path, {
   method: "POST", headers: { "Content-Type": "application/json", Origin: origin, ...extra }, body: JSON.stringify(data)
 });
 
-async function memberAccount(t) {
+async function memberAccount(t, permissions = ["accept_work"]) {
   const f = createAcceptanceFixture();
   const origin = await startServer(t, f);
   const email = "frees-member@example.invalid";
@@ -41,7 +41,7 @@ async function memberAccount(t) {
   f.store.accountLogins.markEmailVerified(session.account.id, email);
   const ownerKey = f.store.issueAccessKey("commons", "owner");
   const send = (type, data) => f.store.command(ownerKey, "commons", { id: randomUUID(), type, data });
-  send(T.MEMBER_ADDED, { memberId: "probe-human", displayName: "Probe73882", kind: "human", permissions: ["accept_work"] });
+  send(T.MEMBER_ADDED, { memberId: "probe-human", displayName: "Probe73882", kind: "human", permissions });
   f.store.bindHumanAccount("commons", "probe-human", session.account.id);
   const creds = { Cookie: `account_session=${token}`, "X-CSRF-Token": session.csrf };
   return { f, origin, creds, send, accountId: session.account.id };
@@ -73,4 +73,11 @@ test("deletion still leaves the integrity audit consistent and history readable"
   await deleteAccount(ctx);
   assert.equal(ctx.f.store.verifyInvitationAudit().consistent, true);
   assert.equal(ctx.f.store.room("commons").state.messages.find(m => m.id === "before-delete").body, "kept");
+});
+
+test("deleting an invite-only human account ends its room membership", async t => {
+  const ctx = await memberAccount(t, ["invite_member"]);
+  await deleteAccount(ctx);
+  assert.equal(ctx.f.store.account(ctx.accountId).active, false);
+  assert.equal(ctx.f.store.room("commons").state.members["probe-human"].active, false);
 });
