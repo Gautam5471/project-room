@@ -174,8 +174,10 @@ export const trustOffMessage = targetId =>
 // "all": members read the whole history. "since_join": a member reads
 // messages and events from their own join onward. The owner and members who
 // hold manage_members always read everything. Without a recorded setting,
-// rooms created with historyDefaultsVersion 1 start link guests and agent
-// guests at their join point; older rooms keep "all" for everyone.
+// link guests and agent guests start at their join point in every room. Rooms
+// created before historyDefaultsVersion 1 get the same computed default
+// (Potter, Oct 10 2026); nothing is written, so old logs replay unchanged, and
+// an owner's explicit "all" still gives guests the full history.
 export const HISTORY_VISIBILITIES = Object.freeze(["all", "since_join"]);
 export const HISTORY_DEFAULTS_VERSION = 1;
 export const ROOM_EXPORT_FORMATS = Object.freeze(["jsonl", "html"]);
@@ -188,7 +190,7 @@ export function historyVisibility(state) {
   const value = HISTORY_VISIBILITIES.includes(stored?.value) ? stored.value : null;
   return {
     value,
-    guestsSinceJoin: value === null && state?.room?.historyDefaultsVersion === HISTORY_DEFAULTS_VERSION,
+    guestsSinceJoin: value === null,
     revision: Number.isSafeInteger(stored?.revision) ? stored.revision : 0,
     setById: typeof stored?.setById === "string" ? stored.setById : null,
     setAt: typeof stored?.setAt === "string" ? stored.setAt : null
