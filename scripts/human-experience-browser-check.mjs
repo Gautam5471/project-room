@@ -223,8 +223,6 @@ test('two humans share public assistant prompts, constraints, confirmed activity
   assert.equal(await ownerRun.getByRole('button', {name:'Stop', exact:true}).count(), 0);
   // The result link returns to the exact public answer, rather than a different run.
   await peer.locator('#assistant-activity').evaluate(n=>{n.open=true;}); // an older request's result lives in Activity
-  // Each ask is a foldable row; the Open result button lives in the detail, so unfold the row first.
-  await peer.locator('#assistant-runs details.assistant-run:has([data-assistant-message="public-result"]) > summary strong').click();
   await peer.locator('#assistant-runs [data-assistant-message="public-result"]').click();
   assert.equal(await peer.locator('[data-message-record-id="public-result"]').count(),1);
   mkdirSync('test-results',{recursive:true}); await peer.screenshot({path:'test-results/human-shared-conversation.png',fullPage:false});
@@ -401,8 +399,6 @@ test('deleted assistant prompt shows only content-free stop controls and preserv
   await page.locator('#main').waitFor({state:'visible'});
   await page.locator('#assistant-activity > summary').click();
   const panel=page.locator('[data-assistant-run="deleted-browser-run"]');
-  // Each ask is a foldable row: unfold it so the detail buttons are reachable (the row stays open across repaints).
-  await panel.locator('summary strong').click();
   await panel.getByRole('button',{name:'Original prompt',exact:true}).waitFor();
   await page.locator('#message-input').fill('Keep my unsent conversation draft.');
   // Keep the old assistant projection cached while real message deletion arrives.
@@ -659,6 +655,8 @@ test('each ask renders as one foldable row; the row keeps its open state', { tim
   await page.locator('#assistant-runs details.assistant-run > summary').first().click();
   await page.waitForFunction(()=>document.querySelector('#assistant-runs details.assistant-run[open]')!==null);
   await page.locator('#assistant-runs details.assistant-run[open]').getByRole('button',{name:'Original prompt',exact:true}).waitFor();
+  // Original prompt is reachable on a folded row too (it lives in the summary).
+  await page.locator('#assistant-runs details.assistant-run:not([open]) > summary').getByRole('button',{name:'Original prompt',exact:true}).waitFor();
   // The open row survives a repaint triggered by new run activity.
   let run = (await api('producer')).runs[0];
   await api('producer',{action:'claim',runId:run.id,attemptId:'fold-host',expectedRevision:run.revision});
