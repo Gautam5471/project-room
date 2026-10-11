@@ -115,6 +115,8 @@ export const wakeListenerLeaseSchema = `
 // A claim is abandoned when its fencing token no longer holds a live lease;
 // redelivery replays the batch with redelivered=true.
 export const WAKE_LISTENER_LEASE_TTL_MS = 60000;
+const WAKE_SIGNAL_FENCED_CODE = "wake_signal_fenced";
+const WAKE_SIGNAL_FENCED_MESSAGE = "one or more signals are claimed by another listener — claim them again, then ack with the claiming fencing token";
 
 export class HeartbeatError extends Error {
   constructor(status, code, message) {
@@ -587,6 +589,21 @@ export class AgentHeartbeats {
         fail(409, "listener_fenced",
           "a live listener lease holds this agent's wake queue — ack with its fencing token");
       }
+      // Owner fence: a pending signal with a claim row belongs to the token
+      // that claimed it, live lease or not. Another token (or no token) must
+      // claim it again first, so an abandoned batch is redelivered with its
+      // flag and never deleted by a listener that did not handle it. Signals
+      // that were never claimed keep the old behavior. Same write lock as the
+      // check above, so nothing can change between this read and the UPDATE.
+      const foreign = this.db.prepare(`SELECT COUNT(*) AS n FROM agent_wake_signals s
+        JOIN agent_wake_signal_claims c ON c.signal_id = s.signal_id
+        WHERE s.agent_id = ? AND s.signal_id IN (${placeholders})
+          AND s.delivered_at IS NULL AND (? IS NULL OR s.room_id = ?)
+          AND (? IS NULL OR c.claimed_by != ?)`)
+        .get(agentId, ...signalIds, roomId, roomId, fencingToken, fencingToken);
+      if (foreign.n > 0) {
+        fail(409, WAKE_SIGNAL_FENCED_CODE, WAKE_SIGNAL_FENCED_MESSAGE);
+      }
       const acknowledged = [];
       const stmt = this.db.prepare(
         "UPDATE agent_wake_signals SET delivered_at=? WHERE agent_id=? AND signal_id=? AND delivered_at IS NULL AND (? IS NULL OR room_id=?)");
@@ -670,12 +687,16 @@ export class AgentHeartbeats {
         FROM agent_wake_signals s
         LEFT JOIN agent_wake_signal_claims c ON c.signal_id = s.signal_id
         WHERE s.agent_id=? AND s.delivered_at IS NULL AND (? IS NULL OR s.room_id=?)
-          AND (c.signal_id IS NULL OR c.claimed_by != ?)
+          AND (c.signal_id IS NULL OR (c.claimed_by != ? AND NOT EXISTS (
+            SELECT 1 FROM agent_wake_listener_leases o
+            WHERE o.agent_id = s.agent_id AND o.fencing_token = c.claimed_by AND o.lease_expires_at > ?)))
+          AND EXISTS (SELECT 1 FROM agent_wake_listener_leases l
+            WHERE l.agent_id = ? AND l.room_key = ? AND l.fencing_token = ? AND l.lease_expires_at > ?)
         ORDER BY s.created_at ASC LIMIT ?
         ON CONFLICT(signal_id) DO UPDATE SET claimed_by=excluded.claimed_by,
           claimed_at=excluded.claimed_at, redelivered=excluded.redelivered
         RETURNING signal_id, redelivered`)
-      .all(agentId, fencingToken, at, agentId, roomId, roomId, fencingToken, limit);
+      .all(agentId, fencingToken, at, agentId, roomId, roomId, fencingToken, at, agentId, roomKey, fencingToken, at, limit);
     const views = this.db.prepare("SELECT * FROM agent_wake_signals WHERE signal_id=?");
     const signals = claimed.map(({ signal_id, redelivered }) =>
       Object.freeze({ ...signalView(views.get(signal_id)), redelivered: redelivered === 1 }));
