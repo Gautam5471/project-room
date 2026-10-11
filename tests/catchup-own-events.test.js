@@ -91,6 +91,27 @@ test("your own posts after you caught up do not count; another member's post sti
   assert.equal(store.returnBrief(other, "commons").history.items.filter(i => i.event.data.body?.startsWith("mine")).length, 3);
 });
 
+// R28-1: the top-bar chip ("Catch up N updates") is client.sequence minus the
+// snapshot's cursor. That cursor stays the stored marker (event resume must not
+// skip your own events), so the chip kept counting the room's own setup and
+// every message you sent while Catch up itself said "Already caught up". The
+// snapshot now also carries the catch-up boundary the brief uses.
+test("the snapshot carries the same catch-up boundary as the brief, and keeps the stored resume cursor", t => {
+  const { store, owner, human, other } = fixture(t);
+  const boundary = token => store.snapshot(token, "commons").catchUpCursor;
+  assert.equal(boundary(owner), store.returnBrief(owner, "commons").history.cursor, "room setup by the owner is not news to the owner");
+  post(store, owner, "mine 1"); post(store, owner, "mine 2");
+  const snap = store.snapshot(owner, "commons");
+  assert.equal(snap.catchUpCursor, snap.sequence, "your own posts are not news");
+  assert.equal(snap.cursor, 0, "the resume cursor is still the stored marker");
+  const theirs = post(store, other, "theirs").sequence;
+  post(store, owner, "mine 3");
+  assert.equal(boundary(owner), theirs - 1, "another member's event stays new");
+  assert.equal(boundary(owner), store.returnBrief(owner, "commons").history.cursor);
+  assert.ok(boundary(human) < store.snapshot(human, "commons").sequence, "someone else's setup and posts are news to a member who wrote nothing");
+  assert.equal(storedCursor(store, "owner"), null, "reading a snapshot never writes a caught-up marker");
+});
+
 test("explicit acknowledgement still moves the marker and never goes backwards", t => {
   const { store, human, other } = fixture(t);
   const H = store.returnBrief(human, "commons").history.evaluatedThrough;
