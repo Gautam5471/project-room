@@ -312,3 +312,20 @@ for (const boundary of ["close", "revoke"]) test(`native result: held retry cann
     assert.equal(await f.page.locator("#result-retry").isEnabled(), true);
   } else assert.equal(await f.page.locator("#result-dialog").isVisible(), false);
 });
+
+// A live update that re-renders the timeline while the member's focus is on a
+// work card's "View result" button must leave that button on screen.
+test("native result 320px: a live update keeps the focused View result control on screen", { timeout: 30000 }, async t => {
+  const f = await setup(t, { review: true, viewport: { width: 320, height: 900 } });
+  const { page } = f, read = page.locator(`[data-work-record-id="${f.workItemId}"] [data-read-result]`);
+  await read.waitFor();
+  await read.focus();
+  const where = () => page.evaluate(() => { const b = document.activeElement.getBoundingClientRect(); return { tag: document.activeElement.dataset.readResult ?? document.activeElement.tagName, top: Math.round(b.top), bottom: Math.round(b.bottom), h: innerHeight, scrollY: Math.round(scrollY) }; });
+  const before = await where();
+  for (let i = 0; i < 3; i++) { f.send(T.MESSAGE_POSTED, { body: `Live update ${i}`, replyToId: "test-welcome" }); await page.waitForTimeout(250); }
+  const mid = await where();
+  f.send(T.MESSAGE_POSTED, { messageId: "native-follow", workItemId: f.workItemId, packetId: "human-packet", basisRevision: f.item().revision, body: "Follow-up on the same work" });
+  await page.waitForTimeout(500);
+  const after = await where();
+  assert.ok(after.top >= 0 && after.bottom <= after.h, `focused control on screen after live updates: ${JSON.stringify({ before, mid, after })}`);
+});
