@@ -18,6 +18,15 @@ export function askFaceStatus(run, now = Date.now()) {
   const textKey = ({ asked: 'asked', not_picked_up: 'notPickedUp', stalled: 'stalled', working: 'working', paused: 'paused', pause_requested: 'pausing', resume_requested: 'resuming', cancel_requested: 'stopping', needs_input: 'needsDecision', done: 'done', failed: 'failed', cancelled: 'stopped' })[key];
   return { key, text: textKey ? uiText(`human.face.${textKey}`) : run.status };
 }
+// A plain message in a one-person room goes to the Room assistant only when it
+// is addressed to no one else: no @-mention of another active member and no reply
+// to a message written by someone other than the sender or the assistant.
+export function soloUnaddressed({ body, replyToId, members, messages, selfId, assistantId }) {
+  const others = Object.values(members ?? {}).filter(m => m.active !== false && m.id !== selfId && m.id !== assistantId);
+  if (others.some(m => m.displayName && new RegExp(`@${m.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'i').test(body ?? ''))) return false;
+  const source = replyToId ? (messages ?? []).find(m => m.id === replyToId) : null;
+  return !source || source.authorId === selfId || source.authorId === assistantId;
+}
 export function installHumanExperience({ getState, getSession, client, notice, openWork, openMessage, startContribution, getContribution, endContribution, selectResult, refreshTranscript }) {
   const $ = selector => document.querySelector(selector);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -285,7 +294,7 @@ export function installHumanExperience({ getState, getSession, client, notice, o
           return null;
         }
       }
-      const solo = Object.values(getState()?.members ?? {}).filter(m => m.active !== false && m.kind === 'human').length === 1 && projection?.assistant.coordinatorMemberId; return !operation && human() && !content.toMemberId && (contribution || selected || /^@Room\b/i.test(content.body) || solo) ? { ...(contribution || { action: 'invoke' }) } : null; },
+      const solo = Object.values(getState()?.members ?? {}).filter(m => m.active !== false && m.kind === 'human').length === 1 && projection?.assistant.coordinatorMemberId && soloUnaddressed({ ...content, members: getState().members, messages: getState().messages, selfId: getSession().member.id, assistantId: projection.assistant.coordinatorMemberId }); return !operation && human() && !content.toMemberId && (contribution || selected || /^@Room\b/i.test(content.body) || solo) ? { ...(contribution || { action: 'invoke' }) } : null; },
     shareResult(item) {
       if (!human() || document.body.classList.contains('human-advanced')) return false;
       if (!resultEntry?.command || resultEntry.workId !== item.id || resultEntry.boundary !== key()) {
