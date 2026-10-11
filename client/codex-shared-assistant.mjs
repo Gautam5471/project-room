@@ -98,7 +98,13 @@ export async function runCodexSharedAssistant({ connection, db, rpc, cwd, policy
       const current = await read();
       if (current.attemptId !== bound.attemptId || String(current.createdAt) !== bound.runCreatedAt || current.sourceDeleted)
         throw new Error("Shared runtime attempt was revoked");
-      if (["start", "steer"].includes(action) && current.status !== "working") throw new Error("Shared runtime is stopping");
+      if (["start", "steer"].includes(action)) {
+        if (current.status !== "working") throw new Error("Shared runtime is stopping");
+        // Server rechecks current coordinator, permissions and autonomy tier.
+        // A run projection alone does not authorize another external action.
+        await act({ action: "report", requestId: `codex-authorize-${randomUUID()}`, expectedRevision: current.revision,
+          state: "working", summary: "Working on the shared request." });
+      }
     } });
   const inputs = async current => Promise.all(current.inputs.map(async entry => {
     const message = await room.message(entry.sourceMessageId);

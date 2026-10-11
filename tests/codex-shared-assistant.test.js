@@ -301,3 +301,15 @@ test("Stop acknowledgement identities do not collide across human resume", async
   assert.equal((await f.run()).result.status, "cancelled");
   assert.equal(f.calls.filter(x => x.method === "turn/interrupt").length, 2);
 });
+test("coordinator demotion prevents a new continuation turn", async t => {
+  const { setTier } = await import("../server/autonomy-tiers.mjs");
+  const f = await setup(t, async context => {
+    if (context.turnNumber === 1) {
+      await appendLate(context, "demotion-input");
+      setTier(f.f.store.db, "commons", "producer", "t1_readonly", { updatedBy: "owner", nowMs: f.f.store.now() });
+    }
+    context.finish("completed");
+  });
+  await assert.rejects(f.run(), /read.only|autonomy|tier/i);
+  assert.equal(f.calls.filter(x => x.method === "turn/start").length, 1);
+});
