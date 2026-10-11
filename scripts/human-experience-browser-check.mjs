@@ -328,6 +328,34 @@ test('a closed result editor cannot mutate its replacement after a delayed respo
 });
 
 // Owns post-login discovery, preference persistence, draft recovery and first-screen simplicity.
+for (const [width, height] of [[1280, 800], [390, 844]]) {
+  test(`the attention preview shows one line, can be dismissed, and gives the timeline its room back (${width}x${height})`, { timeout: 60000 }, async t => {
+    const f = createAcceptanceFixture(), server = createRoomServer({ store: f.store, streamInterval: 40 });
+    const post = (key, data) => f.store.command(key, 'commons', { id: crypto.randomUUID(), type: 'message.posted', data });
+    const mine = [];
+    for (let i = 0; i < 45; i++) { const mineNow = i % 3 === 0; post(mineNow ? f.keys.owner : i % 3 === 1 ? f.keys.guest : f.keys.producer, { messageId: `m${i}`, body: `Message ${i} in a long running conversation.` }); if (mineNow) mine.push(`m${i}`); }
+    for (let i = 0; i < 4; i++) post(f.keys.reviewer, { messageId: `reply${i}`, body: `Reply ${i} to your earlier message`, replyToId: mine[i] });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({ headless: true });
+    t.after(async () => { await browser.close(); server.closeStreams(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); f.store.close(); rmSync(f.directory, { recursive: true, force: true }); });
+    const page = await (await browser.newContext({ viewport: { width, height } })).newPage();
+    await page.goto(origin); await signInFixture(page, f.keys.owner);
+    await page.locator('#activity-preview').waitFor({ state: 'visible' });
+    // Three unread replies are counted, but only the newest is listed: a glance, not a reading surface.
+    assert.equal((await page.locator('#activity-preview-count').textContent()).trim(), '3');
+    assert.equal(await page.locator('#activity-preview-list li').count(), 1);
+    const height1 = await page.locator('.timeline').evaluate(n => n.getBoundingClientRect().height);
+    await page.locator('#activity-preview-dismiss').click();
+    assert.equal(await page.locator('#activity-preview').isHidden(), true);
+    const height2 = await page.locator('.timeline').evaluate(n => n.getBoundingClientRect().height);
+    assert.ok(height2 >= height1 + 60, `dismissing returns the space to the timeline (${height1} -> ${height2})`);
+    // Still dismissed after the preview refreshes with the same unread items.
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.waitForTimeout(800);
+    assert.equal(await page.locator('#activity-preview').isHidden(), true);
+  });
+}
+
 test('human Advanced tools stay out of the door and preserve squad drafts and saved preferences', { timeout: 60000 }, async t => {
   const f = createAcceptanceFixture(), server = createRoomServer({store:f.store, streamInterval:40});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -668,31 +696,3 @@ test('each ask renders as one foldable row; the row keeps its open state', { tim
   assert.equal(await page.locator('#assistant-runs details.assistant-run[open]').count(),1,'summary controls do not toggle the fold');
   assert.deepEqual(errors,[]);
 });
-
-for (const [width, height] of [[1280, 800], [390, 844]]) {
-  test(`the attention preview shows one line, can be dismissed, and gives the timeline its room back (${width}x${height})`, { timeout: 60000 }, async t => {
-    const f = createAcceptanceFixture(), server = createRoomServer({ store: f.store, streamInterval: 40 });
-    const post = (key, data) => f.store.command(key, 'commons', { id: crypto.randomUUID(), type: 'message.posted', data });
-    const mine = [];
-    for (let i = 0; i < 45; i++) { const mineNow = i % 3 === 0; post(mineNow ? f.keys.owner : i % 3 === 1 ? f.keys.guest : f.keys.producer, { messageId: `m${i}`, body: `Message ${i} in a long running conversation.` }); if (mineNow) mine.push(`m${i}`); }
-    for (let i = 0; i < 4; i++) post(f.keys.reviewer, { messageId: `reply${i}`, body: `Reply ${i} to your earlier message`, replyToId: mine[i] });
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({ headless: true });
-    t.after(async () => { await browser.close(); server.closeStreams(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); f.store.close(); rmSync(f.directory, { recursive: true, force: true }); });
-    const page = await (await browser.newContext({ viewport: { width, height } })).newPage();
-    await page.goto(origin); await signInFixture(page, f.keys.owner);
-    await page.locator('#activity-preview').waitFor({ state: 'visible' });
-    // Three unread replies are counted, but only the newest is listed: a glance, not a reading surface.
-    assert.equal((await page.locator('#activity-preview-count').textContent()).trim(), '3');
-    assert.equal(await page.locator('#activity-preview-list li').count(), 1);
-    const height1 = await page.locator('.timeline').evaluate(n => n.getBoundingClientRect().height);
-    await page.locator('#activity-preview-dismiss').click();
-    assert.equal(await page.locator('#activity-preview').isHidden(), true);
-    const height2 = await page.locator('.timeline').evaluate(n => n.getBoundingClientRect().height);
-    assert.ok(height2 >= height1 + 60, `dismissing returns the space to the timeline (${height1} -> ${height2})`);
-    // Still dismissed after the preview refreshes with the same unread items.
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-    await page.waitForTimeout(800);
-    assert.equal(await page.locator('#activity-preview').isHidden(), true);
-  });
-}
