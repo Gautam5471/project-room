@@ -6,7 +6,7 @@ import { EVENT_TYPES as T, MAX_MESSAGE_BODY_CHARS, WORK_STATES as S, roomPolicy,
 import { AccountClient, RoomClient, draftCommand, retryUnconfirmed } from "./client.js";
 import { ReturnBrief, groupBriefHistory } from "./return-brief.js";
 import { attentionPreview, needsAttention, workInvolvingMe, contributionSteps, searchWork, draftFeedback, completedResults, currentResult, roomOrientation } from "./work-selectors.js";
-import { TIMELINE_WINDOW, windowTimeline, windowToInclude, conversationIndex, searchMessages, ConversationDrafts, channelDraftKey, DraftRecovery, draftRecoveryScope, shouldPreserveDrafts, sendsOnEnter, escapeChatAction, messageCluster, mentionQuery, mentionMatches, createBodyHtmlCache, kindLabel, memberStatus, memberHandle, memberPresence, memberDoneChip, presenceLabel, addressMember, shouldAddressPresenceClick, messageMentionsMember, replyAuthorToAddress, composerPlaceholder, removeMention, parseSearchQuery, reactionPills } from "./conversation.js";
+import { menuOpensUp, TIMELINE_WINDOW, windowTimeline, windowToInclude, conversationIndex, searchMessages, ConversationDrafts, channelDraftKey, DraftRecovery, draftRecoveryScope, shouldPreserveDrafts, sendsOnEnter, escapeChatAction, messageCluster, mentionQuery, mentionMatches, createBodyHtmlCache, kindLabel, memberStatus, memberHandle, memberPresence, memberDoneChip, presenceLabel, addressMember, shouldAddressPresenceClick, messageMentionsMember, replyAuthorToAddress, composerPlaceholder, removeMention, parseSearchQuery, reactionPills } from "./conversation.js";
 import { canonicalReaction, clipGraphemes, emojiCatalog, emojiMatches, emojiName, emojiQuery, foldedReactionMap, frequentEmoji, insertEmoji, renderEmojiShortcodes } from "./emoji.js";
 import { nextWorkStep, workStatus, workActions, renderWorkActions, activeClaim, terminalWork, doneChip, reusableWorkDefinition, confirmsWorkProposal, confirmsWorkAction, matchesReceipt, producerKnown as hasReportedProducer, changeDescription, diffResultLines, diffResultSummary, workRecipeOptions } from "./workflow.js";
 import { coordinationLoops } from "./work-loops.js";
@@ -4617,6 +4617,18 @@ document.addEventListener("click", event => {
     if (!picker.contains(event.target)) picker.open = false;
   }
 });
+// The newest message sits against the composer: open its menu upward when it
+// would not fit below (the .message-more-up style flips it).
+document.addEventListener("toggle", event => {
+  const more = event.target;
+  if (!more.matches?.("details.message-more") || !more.open) return;
+  more.classList.remove("message-more-up");
+  const trigger = more.querySelector("summary").getBoundingClientRect(), menu = more.querySelector(".message-more-menu");
+  const composer = document.querySelector("#message-form")?.getBoundingClientRect();
+  const timeline = document.querySelector(".timeline")?.getBoundingClientRect();
+  if (menu && menuOpensUp({ triggerTop: trigger.top, triggerBottom: trigger.bottom, menuHeight: menu.getBoundingClientRect().height + 4,
+    limitTop: Math.max(0, timeline?.top ?? 0), limitBottom: Math.min(window.innerHeight, composer?.top ?? window.innerHeight) })) more.classList.add("message-more-up");
+}, true);
 document.addEventListener("focusin", event => {
   for (const menu of document.querySelectorAll(".message-more[open]")) {
     if (!menu.contains(event.target)) menu.open = false;
