@@ -59,8 +59,10 @@ test("shed loop polls attention against a real room (regression: watch directory
   let heartbeat = null;
   while (Date.now() - start < 45000) {
     if (existsSync(heartbeatPath)) {
-      const parsed = JSON.parse(readFileSync(heartbeatPath, "utf8"));
-      if (parsed.detail && (typeof parsed.detail.items === "number" || parsed.status !== "ok")) { heartbeat = parsed; break; }
+      // The loop rewrites this file in place, so a read can land mid-write: retry on a partial file.
+      let parsed = null;
+      try { parsed = JSON.parse(readFileSync(heartbeatPath, "utf8")); } catch { /* partial write, poll again */ }
+      if (parsed?.detail && (typeof parsed.detail.items === "number" || parsed.status !== "ok")) { heartbeat = parsed; break; }
     }
     await new Promise(r => setTimeout(r, 250));
   }
