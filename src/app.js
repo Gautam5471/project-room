@@ -329,7 +329,7 @@ let timelineRevealing = false;
 const viewPositions = new Map(), pendingReactions = new Map(), pendingPins = new Set(), locallyOwnedMessageIds = new Set();
 let newVisibleMessages = 0, unreadAnchorId = null, mentionIndex = 0, emojiIndex = 0;
 let mutedThreads = new Set(), threadMuteBusy = false;
-let roomCursor = 0, roomGeneration = -1, showAllAttention = false, returnClock = null;
+let roomCursor = 0, catchUpBoundary = 0, roomGeneration = -1, showAllAttention = false, returnClock = null;
 let signoutOperationId = 0, signoutLoading = false;
 let refreshOperationId = 0, submitOperationId = 0;
 let submitControls = null, noticeTimer = null, noticeVersion = 0, workFormOpener = null;
@@ -376,6 +376,9 @@ const client = new RoomClient({
     void refreshRequestRuns();
     offerContextVersion = snapshot.offerContextVersion === 1 ? 1 : null;
     roomCursor = snapshot.cursor;
+    // R28-1: the chip counts from the catch-up boundary (your own unbroken run of
+    // events is not news); the resume cursor above stays the stored marker.
+    catchUpBoundary = Number.isSafeInteger(snapshot.catchUpCursor) ? Math.max(snapshot.cursor, snapshot.catchUpCursor) : snapshot.cursor;
     roomGeneration = client.generation;
     const roomId = state.room?.id ?? identity.roomId;
     if (roomId !== activeChannelRoomId) { activeChannelRoomId = roomId; restoreActiveChannel(); }
@@ -478,7 +481,7 @@ const client = new RoomClient({
     closeResult(false);
     selectWorkView("work");
     renderContent("#room-results-list", "");
-    roomCursor = 0; roomGeneration = -1; showAllAttention = false; clearTimeout(returnClock); returnClock = null;
+    roomCursor = 0; catchUpBoundary = 0; roomGeneration = -1; showAllAttention = false; clearTimeout(returnClock); returnClock = null;
     ownerOffersUI?.reset();
     shareLinksUI?.resetManagement();
     portableWorkUI?.reset();
@@ -7242,7 +7245,7 @@ $("#notification-read-button").addEventListener("click", async () => {
   try {
     const result = await client.caughtUp(feed.sequence); // Exactly what the list was evaluated through.
     if (!ownsNotifications(ticket) || !result) return;
-    saved = true; roomCursor = Math.max(roomCursor, result.cursor); notificationError = "";
+    saved = true; roomCursor = Math.max(roomCursor, result.cursor); catchUpBoundary = Math.max(catchUpBoundary, result.cursor); notificationError = "";
     await client.refresh();
     if (!ownsNotifications(ticket)) return;
     void loadReturnBrief();
@@ -7367,7 +7370,7 @@ function renderReturnBrief({ timelineRendered = false } = {}) {
   const current = owned ? { evaluatedThrough: client.sequence,
     needsAttention: needsAttention({ workItems: state.workItems, memberId: session.member.id, now }),
     workInvolvingMe: workInvolvingMe({ workItems: state.workItems, memberId: session.member.id }) } : null;
-  const unread = state ? Math.max(0, client.sequence - roomCursor) : 0;
+  const unread = state ? Math.max(0, client.sequence - Math.max(roomCursor, catchUpBoundary)) : 0;
   const contributions = owned ? contributionSteps(state, session.member.id, now) : [];
   renderContribution(contributions, owned);
   setText("#catchup-count", current ? briefView.message === "Updating room…" ? "Updating…" : [contributions.length ? `${contributions.length} need${contributions.length === 1 ? "s" : ""} you` : "",
