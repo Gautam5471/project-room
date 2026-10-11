@@ -384,3 +384,37 @@ test("light-theme chat divider keeps 4.5:1 and coarse pointers get 16px/44px con
   assert.ok(control.minHeightPx >= 44, `coarse-pointer input min-height ${control.minHeightPx}px meets the 44px target`);
   await coarse.close();
 });
+
+// R33-1: on a phone the Menu drawer covers the Menu button. Opening it must
+// move focus into the drawer; leaving focus on the covered button sends Tab
+// through the hidden chat behind the drawer first.
+test("phone Menu moves focus into the drawer and Escape brings it back", { timeout: 90000 }, async t => {
+  const fixture = createAcceptanceFixture();
+  const server = createRoomServer({ store: fixture.store, streamInterval: 60 });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true, ...(process.env.ROOM_TEST_CHROMIUM_PATH ? { executablePath: process.env.ROOM_TEST_CHROMIUM_PATH } : {}) });
+  t.after(async () => {
+    await browser.close(); server.closeStreams(); server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve)); fixture.store.close();
+    rmSync(fixture.directory, { recursive: true, force: true });
+  });
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" })).newPage();
+  await page.goto(origin);
+  await signInFixture(page, fixture.keys.owner);
+  await page.locator("#main").waitFor({ state: "visible" });
+  await page.locator("#sidebar-toggle").focus();
+  await page.keyboard.press("Enter");
+  await page.locator("#room-sidebar").waitFor({ state: "visible" });
+  const focusInDrawer = () => page.evaluate(() => {
+    const active = document.activeElement, rect = active.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return document.getElementById("room-sidebar").contains(active) && rect.width > 0 && Boolean(hit && (active === hit || active.contains(hit)));
+  });
+  assert.equal(await focusInDrawer(), true, "focus lands on a visible control inside the open drawer");
+  await page.keyboard.press("Tab");
+  assert.equal(await focusInDrawer(), true, "the next Tab stays in the drawer, not the chat behind it");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.getElementById("main").classList.contains("sidebar-open"));
+  assert.equal(await page.evaluate(() => document.activeElement.id), "sidebar-toggle", "Escape returns focus to Menu");
+});

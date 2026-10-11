@@ -7537,7 +7537,13 @@ $("#topbar-catchup").addEventListener("click", () => { if (state && !busy) openC
 $("#sidebar-toggle").addEventListener("click", () => {
   const shell = $("#main"), open = shell.classList.toggle("sidebar-open");
   $("#sidebar-toggle").setAttribute("aria-expanded", String(open));
-  if (open) $("#room-sidebar .channel.is-active")?.focus();
+  if (!open) return;
+  // The drawer covers this button on a phone, so focus has to move into it.
+  // The single-conversation view hides the channel list, and focus() on a
+  // hidden node is a silent no-op, so fall back to the first visible control.
+  const sidebar = $("#room-sidebar"), shown = node => Boolean(node?.getClientRects().length);
+  const active = sidebar.querySelector(".channel.is-active");
+  (shown(active) ? active : [...sidebar.querySelectorAll("button:not([disabled]), summary, a[href]")].find(shown))?.focus();
 });
 document.addEventListener("click", event => {
   const shell = $("#main");
