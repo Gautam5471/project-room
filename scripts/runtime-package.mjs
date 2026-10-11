@@ -122,6 +122,7 @@ optional.push("server/mcp-hosted-tools.mjs"); // hosted MCP tool definitions (im
 optional.push("server/mcp-discovery.mjs"); // binds the server card to those live lists (imported by server/mcp-http.mjs and deploy/room-entry.mjs)
 optional.push("server/mcp-arg-errors.mjs"); // structured MCP tools/call errors (imported by server/mcp-http.mjs and server/mcp-room-profile.mjs)
 optional.push("server/mcp-identity-mint.mjs"); // anonymous MCP identity mint (imported by server/mcp-http.mjs and server/mcp-room-profile.mjs)
+optional.push("server/mcp-action-search.mjs"); // room_search_actions, room_run_action and the lean profile (imported by server/mcp-discovery.mjs and server/mcp-room-profile.mjs)
 optional.push("server/mcp-room-profile.mjs"); // authenticated hosted MCP room tools (imported by server/http.mjs)
 optional.push("server/spend-grants.mjs"); // spend-primitive MVP: per-agent spend grants + charge-then-forward (imported by server/mcp-room-profile.mjs, server/mcp-full-profile.mjs, server/http.mjs)
 optional.push("server/a2a-jsonrpc.mjs"); // public A2A JSON-RPC join reply at /a2a (imported by server/http.mjs)
