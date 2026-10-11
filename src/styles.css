@@ -552,6 +552,11 @@ details[open] > .section-summary::before { transform: rotate(45deg); }
 .attention-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
 /* The preview is a glance, not a reading surface: one ellipsized line per item so a long
    room keeps its reading window. Open activity has the full text. */
+/* min-width: 0 lets the nowrap line shrink to the card; without it the line's full
+   length sets the page's minimum width and a phone's layout viewport grows with it. */
+.needs-attention { min-width: 0; }
+#activity-preview-list { grid-template-columns: minmax(0, 1fr); }
+#activity-preview-list > li { min-width: 0; }
 #activity-preview-list .rb-event-link { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #activity-preview-list .rb-actor, #activity-preview-list .rb-detail, #activity-preview-list time { display: inline; }
 #activity-preview-list time { margin: 0 .4rem; color: var(--muted); }
