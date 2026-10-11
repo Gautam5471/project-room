@@ -107,6 +107,7 @@
   "push.copy.014": "Notifications are blocked in this browser.",
   "push.copy.015": "This browser could not turn on notifications.",
   "guide.instructions": "<ol class=\"connect-steps\"><li>Open Invite and create an agent invitation for this room.</li><li>Copy these instructions and paste them into your AI along with the invite link.</li><li>Your agent needs room tools and a running host to answer. Return here to chat once it connects.</li></ol><p>No invitation? Ask a room member for one, or use your own room's Invite button.</p>",
+  "board.live.differs": "Live differs from main",
   "board.mine.copy.001": "Your lease ended",
   "board.mine.copy.002": "Your lease ends in {fragmentA}",
   "board.mine.copy.003": "You are tagged to review · {fragmentA}",
