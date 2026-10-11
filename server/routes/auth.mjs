@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { ServiceError } from "../service-error.mjs";
 import { magicLinkUnavailable, validateMagicReturnTo, attemptMailDelivery } from "../magic-links.mjs";
 import { normalizeEmail } from "../account-login-methods.mjs";
-import { resolvePasskeyParams } from "../account-passkeys.mjs";
+import { resolvePasskeyParams, passkeyUserLabel, PASSKEY_RP_NAME } from "../account-passkeys.mjs";
 import { hashPassword, verifyPassword, checkPasswordPolicy, DUMMY_PASSWORD_VERIFIER } from "../../src/password-auth.mjs";
 
 const objectResponse = Object.freeze({ type: "object" });
@@ -372,7 +372,7 @@ export async function handleAuthGroup(ctx) {
       reject(422, "invalid_passkey_request", "authenticatorSelection must be an object");
     }
     return json(res, 200, passkeys().beginRegistration({ accountId: auth.account.id, rpId: params.rpId,
-      rpName: params.rpId, userName: data.userName ?? auth.account.id, authenticatorSelection: data.authenticatorSelection }));
+      rpName: PASSKEY_RP_NAME, userName: data.userName ?? passkeyUserLabel(store, auth.account.id), authenticatorSelection: data.authenticatorSelection }));
   }
   if (url.pathname === "/api/auth/passkey/register/finish" && req.method === "POST") {
     checkOrigin(req, true);

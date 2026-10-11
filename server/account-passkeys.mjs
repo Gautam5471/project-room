@@ -100,6 +100,25 @@ export function resolvePasskeyParams(expectedOriginValue, rpIdOverride = process
   return { origin: url.origin, rpId };
 }
 
+// Name shown in the passkey picker at every sign-in. Account ids for email
+// accounts are "email:<sha256 hex>", which made every picker entry look the
+// same and unreadable, so show the verified email first, then any email, then
+// the profile display name. An account with none of them gets a plain label.
+export const PASSKEY_RP_NAME = "Project Room";
+export const PASSKEY_FALLBACK_USER = "Project Room account";
+export function passkeyUserLabel(store, accountId) {
+  try {
+    const methods = store.accountLogins.listMethods(accountId).filter(method => !method.disabled && isNonEmptyString(method.email));
+    const best = methods.find(method => method.verifiedAt) ?? methods[0];
+    if (best) return best.email;
+  } catch { /* fall through to the profile */ }
+  try {
+    const name = store.accountProfile(accountId).displayName;
+    if (isNonEmptyString(name)) return name;
+  } catch { /* account has no profile row */ }
+  return PASSKEY_FALLBACK_USER;
+}
+
 // Wiring around the model. `store` is the RoomStore (store.accountLogins,
 // store.loginAccountSessionWithMethod, store.db). `challenges` defaults to a
 // fresh in-memory store; the HTTP layer creates one per server instance and

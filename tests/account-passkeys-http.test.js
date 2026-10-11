@@ -30,7 +30,7 @@ import { rmSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { createAcceptanceFixture } from "../scripts/acceptance-fixture.mjs";
 import { createRoomServer } from "../server/http.mjs";
-import { createPasskeyAuth } from "../server/account-passkeys.mjs";
+import { createPasskeyAuth, passkeyUserLabel, PASSKEY_FALLBACK_USER } from "../server/account-passkeys.mjs";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -121,7 +121,7 @@ test("register options returns ceremony options for a signed-in account", async 
   assert.equal(body.challengeId, "ch-reg-1");
   assert.equal(body.rp.id, "127.0.0.1");
   assert.deepEqual(service.calls[0], ["beginRegistration", {
-    accountId: "passkey-user", rpId: "127.0.0.1", rpName: "127.0.0.1", userName: "Ada", authenticatorSelection: undefined
+    accountId: "passkey-user", rpId: "127.0.0.1", rpName: "Project Room", userName: "Ada", authenticatorSelection: undefined
   }]);
 });
 
@@ -348,4 +348,32 @@ test("a spoofed Host header is rejected before the passkey routes (403 host_deni
   });
   assert.equal(status, 403);
   assert.equal(JSON.parse(body).error.code, "host_denied");
+});
+
+// P3: an empty options request used to name the passkey after the account id
+// ("email:<64 hex>"), so every picker entry looked the same and unreadable.
+test("register options with no userName names the passkey after the account's email, not its id", async t => {
+  const f = createAcceptanceFixture();
+  const service = fakePasskeyService();
+  const origin = await startServer(t, f, { passkeyService: service });
+  const { slot, session } = signIn(f);
+  f.store.accountLogins.linkMagicMethod("passkey-user", { email: "ada@example.test" });
+  const res = await post(origin, "/api/auth/passkey/register/options", authedHeaders(origin, slot, session), {});
+  assert.equal(res.status, 200);
+  const [, args] = service.calls[0];
+  assert.equal(args.userName, "ada@example.test");
+  assert.equal(args.rpName, "Project Room", "the relying-party name is the product, not the host");
+});
+
+test("passkeyUserLabel prefers a verified email, then any email, then the display name, never the account id", () => {
+  const f = createAcceptanceFixture();
+  const id = `email:${"0123456789abcdef".repeat(4)}`;
+  f.store.createAccount(id, "magic-link");
+  assert.equal(passkeyUserLabel(f.store, id), PASSKEY_FALLBACK_USER, "no email, no name: a plain label, not the hash id");
+  f.store.updateAccountProfile(id, { displayName: "Ada L" });
+  assert.equal(passkeyUserLabel(f.store, id), "Ada L");
+  f.store.accountLogins.linkMagicMethod(id, { email: "first@example.test" });
+  assert.equal(passkeyUserLabel(f.store, id), "first@example.test");
+  for (const account of [id]) assert.ok(!passkeyUserLabel(f.store, account).startsWith("email:"));
+  assert.equal(passkeyUserLabel(f.store, "missing-account"), PASSKEY_FALLBACK_USER, "an unknown account falls back instead of throwing");
 });
