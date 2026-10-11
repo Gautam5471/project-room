@@ -4596,6 +4596,8 @@ $("#presence-list").addEventListener("click", e => {
   const row = e.target.closest(".presence-member");
   const member = state?.members[row?.dataset.memberRecordId];
   if (!member || member.active === false) return;
+  $("#main").classList.remove("sidebar-open");
+  $("#sidebar-toggle").setAttribute("aria-expanded", "false");
   applyMentionMember(member);
 });
 function chatEscapeState() {
