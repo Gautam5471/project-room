@@ -149,7 +149,7 @@ export async function readBoardDeployStatus(store, { fetchImpl, token, nowMs = D
   if (fresh && !force) return { ...cached, stale: false };
   const entry = { atMs: nowMs, promise: null };
   entry.promise = readRoomDeployStatus(store, { fetchImpl, token, nowMs })
-    .then(status => ({ ...status, stale: false }))
+    .then(status => ({ ...status, stale: status.stale === true }))
     .finally(() => { entry.promise = null; });
   statusFlights.set(key, entry);
   return entry.promise;
