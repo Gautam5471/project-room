@@ -48,6 +48,13 @@ export function messageCluster(messages, index) {
   return { grouped, dayStart, dayLabel: dayStart ? dayLabel(m.createdAt) : "" };
 }
 
+// Whether a message overflow menu should open upward: it does not fit between
+// its trigger and the bottom limit (the composer's top edge, else the window),
+// and there is more room above than below.
+export function menuOpensUp({ triggerTop, triggerBottom, menuHeight, limitTop, limitBottom }) {
+  const below = limitBottom - triggerBottom, above = triggerTop - limitTop;
+  return menuHeight > below && above > below;
+}
 export function mentionQuery(text, caret) {
   const value = String(text ?? "");
   const pos = Number.isInteger(caret) ? Math.min(Math.max(caret, 0), value.length) : value.length;
