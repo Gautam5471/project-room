@@ -715,6 +715,23 @@
             <div class="dialog-actions"><button id="friend-dm-close" class="button ghost" type="button">Close</button><button class="button primary" type="submit">Send</button></div>
           </form>
         </dialog>
+        <dialog id="message-edit-dialog" aria-labelledby="message-edit-title">
+          <form id="message-edit-form" method="dialog">
+            <div class="dialog-head"><h2 id="message-edit-title">Edit message</h2></div>
+            <label class="field"><span>Message</span><textarea id="message-edit-input" name="body" rows="4" required></textarea></label>
+            <p id="message-edit-status" class="status form-status" role="status"></p>
+            <div class="dialog-actions"><button id="close-message-edit" class="button ghost" value="cancel" formnovalidate type="submit">Cancel</button><button class="button primary" value="default" type="submit">Save</button></div>
+          </form>
+        </dialog>
+        <dialog id="message-delete-dialog" aria-labelledby="message-delete-title">
+          <form id="message-delete-form" method="dialog">
+            <div class="dialog-head"><h2 id="message-delete-title">Delete message</h2></div>
+            <p id="message-delete-source" class="form-hint"></p>
+            <p class="form-hint">This removes the message for everyone. It can't be undone.</p>
+            <p id="message-delete-status" class="status form-status" role="status"></p>
+            <div class="dialog-actions"><button id="close-message-delete" class="button ghost" value="cancel" formnovalidate type="submit">Cancel</button><button class="button destructive" value="default" type="submit">Delete</button></div>
+          </form>
+        </dialog>
         <dialog id="report-dialog" aria-labelledby="report-title">
           <form id="report-form" method="dialog">
             <div class="dialog-head"><h2 id="report-title">Report</h2></div>

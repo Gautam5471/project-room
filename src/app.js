@@ -2532,7 +2532,11 @@ function messageLinksHTML(m, { linked, moderation, count, muted, canReact = fals
     ? `<button class="message-to-work" data-message-action="work" data-message-id="${esc(m.id)}" type="button">Make this work</button>` : "";
   const decideHtml = !m.deletedAt && can("decide") && state.members[session.member.id]?.kind === "human"
     ? `<button class="message-to-work" data-message-action="decide" data-message-id="${esc(m.id)}" type="button">Record decision</button>` : "";
-  const overflow = [reactHtml, saveHtml, pinHtml, markUnreadHtml, laterHtml, workHtml, decideHtml, moderation].filter(Boolean).join("");
+  // Own messages only: the author can edit or delete (the server also lets the owner delete; that stays out of this menu).
+  const own = !m.deletedAt && m.authorId === session.member.id && !m.proposal;
+  const editHtml = own ? `<button class="message-to-work" data-message-action="edit" data-message-id="${esc(m.id)}" type="button">Edit message</button>` : "";
+  const deleteHtml = own ? `<button class="message-to-work" data-message-action="delete" data-message-id="${esc(m.id)}" type="button">Delete message</button>` : "";
+  const overflow = [reactHtml, saveHtml, pinHtml, markUnreadHtml, laterHtml, workHtml, decideHtml, editHtml, deleteHtml, moderation].filter(Boolean).join("");
   const menu = overflow ? `<details class="message-more"><summary aria-label="More actions for this message" title="More actions">⋯</summary><div class="message-more-menu">${overflow}</div></details>` : "";
   return `<div class="message-links">${requestControls(m)}${linked.map(i => `<a class="work-link" href="${esc(workHref(i.id))}" data-open-work="${esc(i.id)}">↳ ${esc(i.title)}</a>${doneChip(i)}`).join("")}${replyHtml}${threadHtml}${menu}</div>`;
 }
@@ -4245,6 +4249,8 @@ $("#message-list").addEventListener("click", e => {
   else if (button.dataset.messageAction === "mark-unread") void markMessageUnread(id);
   else if (button.dataset.messageAction === "save") void toggleSaved(id);
   else if (button.dataset.messageAction === "report") openReport(id);
+  else if (button.dataset.messageAction === "edit") openEditMessage(id);
+  else if (button.dataset.messageAction === "delete") openDeleteMessage(id);
   else if (["mute", "unmute"].includes(button.dataset.messageAction)) setMute(conversation.byId.get(id)?.authorId, button.dataset.messageAction === "mute");
   else if (["reply", "thread"].includes(button.dataset.messageAction)) {
     switchThread(conversation.rootById.get(id), button.dataset.messageAction === "reply");
@@ -5374,6 +5380,60 @@ function openReport(messageId) {
   $("#report-dialog").showModal();
   $("#report-reason-input").focus();
 }
+let messageEditTarget = null, messageDeleteTarget = null;
+function ownEditableMessage(messageId) {
+  const message = conversation.byId.get(messageId);
+  return message && !message.deletedAt && message.authorId === session?.member.id ? message : null;
+}
+function openEditMessage(messageId) {
+  if (busy) return;
+  const message = ownEditableMessage(messageId);
+  if (!message) return;
+  messageEditTarget = { id: messageId, revision: message.revision ?? 0, generation: client.generation };
+  $("#message-edit-input").value = message.body ?? "";
+  setFormStatus($("#message-edit-status"), "");
+  $("#message-edit-dialog").showModal();
+  $("#message-edit-input").focus();
+}
+$("#close-message-edit").addEventListener("click", () => { if (!busy) { $("#message-edit-dialog").close(); messageEditTarget = null; } });
+$("#message-edit-dialog").addEventListener("cancel", event => { event.preventDefault(); if (!busy) { $("#message-edit-dialog").close(); messageEditTarget = null; } });
+$("#message-edit-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const target = messageEditTarget, body = $("#message-edit-input").value;
+  if (!target || !state || target.generation !== client.generation) return;
+  const current = ownEditableMessage(target.id);
+  if (!current) { $("#message-edit-dialog").close(); messageEditTarget = null; return; }
+  if (body.length > MAX_MESSAGE_BODY_CHARS) { setFormStatus($("#message-edit-status"), uiText("message.edit_too_long", { limit: new Intl.NumberFormat("en-US").format(MAX_MESSAGE_BODY_CHARS) }), true); return; }
+  if (!body.trim()) { setFormStatus($("#message-edit-status"), uiText("message.edit_empty"), true); return; }
+  if (body === current.body) { $("#message-edit-dialog").close(); messageEditTarget = null; return; }
+  submit($("#message-edit-form"), async () => {
+    await client.send(draftCommand(null, T.MESSAGE_EDITED, { messageId: target.id, body, expectedMessageRevision: target.revision }).command);
+    if (!state) return;
+    $("#message-edit-dialog").close(); messageEditTarget = null;
+  }, { failureHint: uiText("message.edit_failed_hint") });
+});
+function openDeleteMessage(messageId) {
+  if (busy) return;
+  const message = ownEditableMessage(messageId);
+  if (!message) return;
+  messageDeleteTarget = { id: messageId, revision: message.revision ?? 0, generation: client.generation };
+  $("#message-delete-source").textContent = clipGraphemes(message.body, 200);
+  setFormStatus($("#message-delete-status"), "");
+  $("#message-delete-dialog").showModal();
+  $("#close-message-delete").focus();
+}
+$("#close-message-delete").addEventListener("click", () => { if (!busy) { $("#message-delete-dialog").close(); messageDeleteTarget = null; } });
+$("#message-delete-dialog").addEventListener("cancel", event => { event.preventDefault(); if (!busy) { $("#message-delete-dialog").close(); messageDeleteTarget = null; } });
+$("#message-delete-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const target = messageDeleteTarget;
+  if (!target || !state || target.generation !== client.generation) return;
+  submit($("#message-delete-form"), async () => {
+    await client.send(draftCommand(null, T.MESSAGE_DELETED, { messageId: target.id, expectedMessageRevision: target.revision }).command);
+    if (!state) return;
+    $("#message-delete-dialog").close(); messageDeleteTarget = null;
+  }, { failureHint: uiText("message.delete_failed_hint") });
+});
 $("#close-report").addEventListener("click", () => { if (!busy) $("#report-dialog").close(); });
 $("#report-dialog").addEventListener("cancel", event => { event.preventDefault(); if (!busy) $("#report-dialog").close(); });
 $("#report-form").addEventListener("submit", e => {
