@@ -354,6 +354,7 @@
   "signin.login-options": "<button type=\"button\" class=\"text-button\" data-forgot-password>Forgot password?</button>",
   "signin.passkey.action": "<button type=\"button\" class=\"text-button\" data-passkey-signin>Use a passkey</button>",
   "signin.passkey.cancelled": "Passkey sign-in cancelled. Try again or use your password.",
+  "human.face.connectionInterrupted": "Connection interrupted",
   "human.face.asked": "Asked. Waiting for the assistant.",
   "human.face.notPickedUp": "Not picked up yet. The assistant hasn't started, so it may be offline. Your request will wait.",
   "human.face.stalled": "Stalled. No update from the assistant for 2 minutes. You can stop it.",
