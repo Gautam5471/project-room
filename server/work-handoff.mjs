@@ -128,13 +128,20 @@ const idList = (value, maxItems, field, { optional = false } = {}) => {
 // file (repo path + optional sha), url (https reference), note (short inline
 // context, capped — not a document dump).
 const inputKinds = Object.freeze(["work", "message", "file", "url", "note"]);
+// Userinfo is a credential even when the rest of the URL is https. A port
+// and an "@" in the path are not userinfo and stay allowed.
+const httpsReferenceWithoutCredentials = ref => {
+  let url;
+  try { url = new URL(ref); } catch { return false; }
+  return url.protocol === "https:" && url.username === "" && url.password === "" && url.hostname !== "";
+};
 const envelopeInput = value => {
   envelopeCheck(value !== null && typeof value === "object" && !Array.isArray(value), ENVELOPE_CODE, "inputs must be objects");
   envelopeCheck(Object.keys(value).every(k => ["kind", "ref", "label", "sha", "detail"].includes(k)), ENVELOPE_CODE,
     "input carries only kind/ref/label/sha/detail");
   envelopeCheck(inputKinds.includes(value.kind), ENVELOPE_CODE, `input kind must be one of ${inputKinds.join(",")}`);
   const ref = envelopeText(value.ref, 2048, "input ref");
-  if (value.kind === "url") envelopeCheck(/^https:\/\/[^\/\s]+\S*$/.test(ref), ENVELOPE_CODE, "url inputs must be https URLs without credentials");
+  if (value.kind === "url") envelopeCheck(httpsReferenceWithoutCredentials(ref), ENVELOPE_CODE, "url inputs must be https URLs without credentials");
   if (value.sha !== undefined && value.sha !== null)
     envelopeCheck(/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value.sha), ENVELOPE_CODE, "input sha must be a 40 or 64 char hex digest");
   return Object.freeze({ kind: value.kind, ref,
