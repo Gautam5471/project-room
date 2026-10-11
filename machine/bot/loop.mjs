@@ -669,13 +669,14 @@ export class MachineBot {
       const closed = await closeClaim(this.config.roomOrigin, active.roomId, this.secret, active[field], {
         blobs: receipt.blobs, tags: receipt.tags, note, requestId: `${completion.messageId}-${field}`, isStopped: held,
       });
-      if (!closed.ok) return { deliveryPending: true, stage: field, status: closed.status };
-      completion[field] = true;
+      if (!closed.ok && !closed.awaitingReview) return { deliveryPending: true, stage: field, status: closed.status };
+      // Review blocks acceptance, not delivery of the evidence a reviewer needs.
+      completion[field] = closed.awaitingReview ? "awaiting_review" : true;
       await this.saveState();
     }
     if (!completion.posted) {
       if (held()) return { halted: true, deliveryPending: true };
-      const body = [completion.text, ...(receipt.blobs.length ? [`Receipt ${receipt.blobs.join(" ")}`] : [])].join("\n");
+      const body = [completion.text, ...([completion.workId, completion.leaseId].includes("awaiting_review") ? ["Awaiting review."] : []), ...(receipt.blobs.length ? [`Receipt ${receipt.blobs.join(" ")}`] : [])].join("\n");
       const posted = await this.api.post(active.roomId, body, { replyToId: active.messageId, messageId: completion.messageId });
       if (!posted.ok) return { deliveryPending: true, stage: 'message', status: posted.status };
       completion.posted = true;
@@ -690,7 +691,8 @@ export class MachineBot {
     this.clearSlot(active);
     this.active = null;
     await this.saveState();
-    return { done: true, closed: true, blobs: receipt.blobs, workId: active.workId, leaseId: active.leaseId };
+    const awaitingReview = [completion.workId, completion.leaseId].includes("awaiting_review");
+    return { done: true, closed: !awaitingReview, awaitingReview, blobs: receipt.blobs, workId: active.workId, leaseId: active.leaseId };
   }
 }
 

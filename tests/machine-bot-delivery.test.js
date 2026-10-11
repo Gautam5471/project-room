@@ -8,7 +8,7 @@ import { createRoomServer } from '../server/http.mjs';
 import { MachineBot } from '../machine/bot/loop.mjs';
 import { createRoomApi } from '../machine/bot/room-api.mjs';
 
-for (const failure of ['message-rejected', 'message-lost', 'claim-lost', 'receipt-rejected', 'halt-during-receipt', 'update-not-found', 'halt-during-claim']) {
+for (const failure of ['message-rejected', 'message-lost', 'claim-lost', 'claim-forbidden', 'receipt-rejected', 'halt-during-receipt', 'update-not-found', 'halt-during-claim']) {
   test(`finished machine work survives restart after ${failure}`, async t => {
     const f = createAcceptanceFixture(), home = mkdtempSync(join(tmpdir(), 'machine-delivery-'));
     const server = createRoomServer({ store: f.store });
@@ -34,11 +34,12 @@ for (const failure of ['message-rejected', 'message-lost', 'claim-lost', 'receip
     const realFetch = globalThis.fetch;
     let failed = false;
     t.mock.method(globalThis, 'fetch', async (url, options) => {
-      const target = failure === 'halt-during-claim' ? String(url).endsWith('/delivery-work/update') && JSON.parse(options.body).state === 'in_progress' : ['receipt-rejected', 'halt-during-receipt'].includes(failure) ? String(url).endsWith('/files') : failure === 'claim-lost'
+      const target = failure === 'halt-during-claim' ? String(url).endsWith('/delivery-work/update') && JSON.parse(options.body).state === 'in_progress' : ['receipt-rejected', 'halt-during-receipt'].includes(failure) ? String(url).endsWith('/files') : ['claim-lost', 'claim-forbidden'].includes(failure)
         ? String(url).endsWith('/delivery-work/update') && JSON.parse(options.body).state === 'done'
         : String(url).endsWith('/commands');
       if (!failed && target) {
         failed = true;
+        if (failure === 'claim-forbidden') return Response.json({ error: { code: 'access_denied' } }, { status: 403 });
         if (['halt-during-receipt', 'halt-during-claim'].includes(failure)) { const response = await realFetch(url, options); bot.daemon = { state: { halted: true } }; return response; }
         if (!['message-rejected', 'receipt-rejected'].includes(failure)) await realFetch(url, options);
         return new Response('{}', { status: 503 });
@@ -46,7 +47,7 @@ for (const failure of ['message-rejected', 'message-lost', 'claim-lost', 'receip
       return realFetch(url, options);
     });
     const first = await bot.finish('The finished result.');
-    if (failure.startsWith('halt-during')) assert.equal(f.store.room('commons').state.messages.filter(m => m.body.startsWith('The finished result.')).length, 0);
+    if (failure.startsWith('halt-during') || failure === 'claim-forbidden') assert.equal(f.store.room('commons').state.messages.filter(m => m.body.startsWith('The finished result.')).length, 0);
     assert.notEqual(first.done, true, 'a missing delivery acknowledgement is not done');
     const resumed = setup(new MachineBot({ home, env: {} }));
     resumed.daemon = { state: { halted: true, slots: { desk: { claimId: 'another-lease' } } } };
@@ -80,5 +81,52 @@ for (const throws of [false, true]) {
     try { await bot.run(); } finally { clearInterval(keepAlive); }
     assert.ok(performance.now() - started >= 800, 'wait before retrying a failed request');
     assert.equal(calls, 2);
+  });
+}
+
+for (const reviewPolicy of ['distinct_member', 'independent_principal']) {
+  test(`finished result is delivered without bypassing ${reviewPolicy} review`, async t => {
+    const f = createAcceptanceFixture(), home = mkdtempSync(join(tmpdir(), 'machine-review-delivery-'));
+    const server = createRoomServer({ store: f.store });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    t.after(async () => {
+      server.closeStreams(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+      f.store.close(); rmSync(f.directory, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+    });
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const api = createRoomApi({ origin, secret: f.keys.owner });
+    for (const id of ['review-work', 'review-lease']) {
+      assert.equal((await api.createClaim('commons', { id, title: id, reviewPolicy: id === 'review-work' ? reviewPolicy : 'self_attested' })).ok, true);
+      assert.equal((await api.takeClaim('commons', id, {})).ok, true);
+    }
+    const setup = bot => {
+      bot.config = { roomOrigin: origin, label: 'Test machine' }; bot.secret = f.keys.owner; bot.api = api;
+      bot.provider = { next: async () => assert.fail('review must not rerun finished provider work') };
+      return bot;
+    };
+    const bot = setup(new MachineBot({ home, env: {} }));
+    bot.active = { roomId: 'commons', workId: 'review-work', leaseId: 'review-lease', slot: 'desk', messageId: null, observations: [] };
+    // Lose the result acknowledgement: replay must retain the review outcome and message identity.
+    const realFetch = globalThis.fetch;
+    let lost = false;
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      const response = await realFetch(url, options);
+      if (!lost && String(url).endsWith('/commands')) { lost = true; return new Response('{}', { status: 503 }); }
+      return response;
+    });
+    assert.equal((await bot.finish('Result ready for review.')).deliveryPending, true);
+    assert.equal(lost, true, 'a review gate must not prevent result publication');
+    const resumed = setup(new MachineBot({ home, env: {} }));
+    const result = await resumed.continueActive();
+    assert.equal(result.done, true, 'delivery is complete');
+    assert.equal(result.closed, false, 'reviewed work remains open');
+    assert.equal(result.awaitingReview, true);
+    assert.equal(resumed.active, null);
+    const work = (await api.claim('commons', 'review-work')).value;
+    assert.equal(work.state, 'in_progress');
+    assert.equal(work.reviewedBy, null);
+    assert.ok(work.history.some(entry => entry.note?.includes('Receipt sha256:')), 'reviewer can inspect receipt before approving');
+    assert.equal((await api.claim('commons', 'review-lease')).value.state, 'done');
+    assert.equal(f.store.room('commons').state.messages.filter(m => m.body.startsWith('Result ready for review.')).length, 1);
   });
 }

@@ -47,12 +47,15 @@ export async function stageReceipt({ origin, roomId, secret, home, claimId, labe
 }
 
 export async function closeClaim(origin, roomId, secret, claimId, { blobs, tags, note, requestId, isStopped = () => false }) {
-  const progressed = await updateClaim(origin, roomId, secret, claimId, { state: "in_progress", requestId: `${requestId}-start` });
+  const progressed = await updateClaim(origin, roomId, secret, claimId, { state: "in_progress", note: [note, ...(blobs.length ? [`Receipt ${blobs.join(" ")}`] : [])].join("\n"), requestId: `${requestId}-start` });
   if (!progressed.ok) return { ok: false, status: progressed.status };
   if (isStopped()) return { ok: false, halted: true };
   const done = await updateClaim(origin, roomId, secret, claimId, {
     state: "done", requestId: `${requestId}-done`,
     deliveryMode: "result", tags, blobs, note,
   });
-  return { ok: done.ok && done.value?.state === "done", status: done.status };
+  return {
+    ok: done.ok && done.value?.state === "done", status: done.status,
+    awaitingReview: done.status === 403 && done.value?.error?.code === "work_review_rejected",
+  };
 }
