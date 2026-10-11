@@ -1,4 +1,4 @@
-import { clickChrome } from "./room-chrome.mjs";
+import { clickChrome, ensureSidebarClosed } from "./room-chrome.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, readFileSync, statSync } from "node:fs";
@@ -364,4 +364,29 @@ test("a delayed enrollment receipt cannot restore setup after owner access ends"
   assert.equal(await f.page.locator("#agent-connect-dialog").isVisible(), false);
   assert.equal(await f.page.locator("#agent-private-config").inputValue(), "");
   assert.equal(await f.page.locator("#agent-setup").isVisible(), false);
+});
+
+test("a just-created connection reads as ready, not as a missing member, without a reload (R29-1)", { timeout: 30000 }, async t => {
+  // The connections list is fetched right after Create access, before the room
+  // stream has applied the new agent's member event. It used to keep saying
+  // "Member record missing" until the owner reloaded the page.
+  const f = await setup(t, true);
+  // The first-time path: composer "Connect" -> "Add an agent", not the sidebar.
+  await ensureSidebarClosed(f.page);
+  await f.page.locator("#assistant-setup").click();
+  await f.page.locator("#room-assistant-setup button", { hasText: "Add an agent" }).click();
+  await f.page.locator("#agent-connect-dialog").waitFor({ state: "visible" });
+  await f.create();
+  await f.page.locator("#agent-setup").waitFor({ state: "visible" });
+  const row = () => f.page.evaluate(() => [...document.querySelectorAll("#agent-connect-list li")]
+    .map(li => li.textContent).find(text => text.includes("Synthetic Claude")) ?? "");
+  await f.page.waitForFunction(() => [...document.querySelectorAll("#agent-connect-list li")].some(li => li.textContent.includes("Synthetic Claude")));
+  const member = Object.values(f.store.room("commons").state.members).find(m => m.displayName === "Synthetic Claude");
+  assert.equal(member?.active, true, "the server already holds the agent's member record");
+  await f.page.waitForFunction(() => [...document.querySelectorAll("#agent-connect-list li")]
+    .some(li => li.textContent.includes("Synthetic Claude") && /Access ready, waiting for first action/.test(li.textContent)), null, { timeout: 4000 })
+    .catch(() => {});
+  const text = await row();
+  assert.doesNotMatch(text, /Member record missing/, `fresh connection must not read as a missing member: ${text.slice(0, 120)}`);
+  assert.match(text, /Access ready, waiting for first action/);
 });

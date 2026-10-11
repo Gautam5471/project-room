@@ -2301,6 +2301,8 @@ function renderMessages() {
   const anchorOffset = anchor?.getBoundingClientRect().top;
   const focused = list.contains(document.activeElement) ? document.activeElement : null;
   const focusKey = focused?.closest("[data-key]")?.dataset.key;
+  const focusedRect = focused?.getBoundingClientRect();
+  const focusedOnScreen = Boolean(focusedRect && focusedRect.bottom > 0 && focusedRect.top < innerHeight);
   const focusAction = focused?.dataset.messageAction, focusReaction = focused?.dataset.reaction;
   const focusedFeedback = focused?.closest(".draft-feedback");
   // A control inside a work card is restored by setTimelineWorkNode when that
@@ -2468,6 +2470,14 @@ function renderMessages() {
   // themselves while the render was in flight keeps it.
   if (focusedKey && document.activeElement === document.body) {
     [...list.querySelectorAll("[data-focus-key]")].find(node => node.dataset.focusKey === focusedKey)?.focus({ preventScroll: true });
+  }
+  // A re-render that trims or reflows the timeline can move the node the member
+  // was working on out of view (the page scroll is clamped or the card moves),
+  // and restoring focus above uses preventScroll. If it was on screen before and
+  // the focused control is not now, bring it back the least amount.
+  if (focusedOnScreen && list.contains(document.activeElement) && document.activeElement !== document.body) {
+    const now = document.activeElement.getBoundingClientRect();
+    if (now.bottom <= 0 || now.top >= innerHeight) document.activeElement.scrollIntoView({ block: "nearest", behavior: "instant" });
   }
   $("#new-messages-button").hidden = newVisibleMessages === 0;
   $("#new-messages-button").textContent = `${newVisibleMessages} new ${newVisibleMessages === 1 ? "message" : "messages"} · jump to latest`;

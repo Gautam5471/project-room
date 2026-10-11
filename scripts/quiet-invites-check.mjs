@@ -165,3 +165,39 @@ test('the Invite dialog still opens when the creator-only Access control is miss
   assert.equal(await page.locator('#share-link-create').evaluate(node => node === document.activeElement), true, 'focus lands on Create');
   assert.deepEqual(errors, [], 'opening the dialog throws nothing');
 });
+
+test('two submits while a link is being created make one link request', { timeout: 40000 }, async t => {
+  const fixture = createAcceptanceFixture();
+  const server = createRoomServer({ store: fixture.store, streamInterval: 60 });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => {
+    await browser.close(); server.closeStreams(); server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    fixture.store.close(); rmSync(fixture.directory, { recursive: true, force: true });
+  });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }); page.setDefaultTimeout(10000);
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const creates = [], release = Promise.withResolvers();
+  t.after(() => release.resolve());
+  await page.route('**/api/rooms/commons/share-links', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    creates.push(route.request().postDataJSON());
+    await release.promise; await route.continue();
+  });
+  await page.goto(origin);
+  await signInFixture(page, fixture.keys.owner);
+  await page.locator('#main').waitFor({ state: 'visible' });
+  await clickChrome(page, '#invite-people-button');
+  await page.locator('#share-link-dialog').waitFor({ state: 'visible' });
+  // A native click cannot do this (the button is disabled), but a script or an
+  // extension can submit the form again while the first request is in flight.
+  await page.evaluate(() => { const form = document.querySelector('#share-link-form'); form.requestSubmit(); form.requestSubmit(); });
+  await page.waitForTimeout(300);
+  release.resolve();
+  await page.locator('#share-link-result').waitFor({ state: 'visible' });
+  await page.waitForTimeout(300);
+  assert.equal(creates.length, 1, 'one request for two submits');
+  assert.deepEqual(errors, []);
+});

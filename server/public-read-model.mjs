@@ -655,10 +655,20 @@ export function listPublicRoomSitemap(store) {
     }));
 }
 
-export function roomPageReceipts(store, slug, receiptsEnabled) {
-  return store.db.prepare(`SELECT id, title FROM public_receipts
-    WHERE ${HIDDEN_RECEIPT} AND (room_id=? OR (?=1 AND origin_room_id=? AND source IN ('work-claim','work-item')))
-    ORDER BY at DESC, id ASC LIMIT 5`).all(slug, receiptsEnabled ? 1 : 0, slug);
+// Newest-first page of receipts that name this room. `after` is the last row
+// of the previous page ({ at, id }) so a caller can skip rows it will drop.
+export function roomPageReceipts(store, slug, receiptsEnabled, { limit = 5, after = null } = {}) {
+  const cap = Number.isInteger(limit) && limit > 0 && limit <= 50 ? limit : 5;
+  const params = [slug, receiptsEnabled ? 1 : 0, slug];
+  let cursor = "";
+  if (after && typeof after.at === "string" && typeof after.id === "string") {
+    cursor = " AND (at < ? OR (at = ? AND id > ?))";
+    params.push(after.at, after.at, after.id);
+  }
+  params.push(cap);
+  return store.db.prepare(`SELECT id, title, at FROM public_receipts
+    WHERE ${HIDDEN_RECEIPT} AND (room_id=? OR (?=1 AND origin_room_id=? AND source IN ('work-claim','work-item')))${cursor}
+    ORDER BY at DESC, id ASC LIMIT ?`).all(...params);
 }
 
 export function queryDirectoryEntries(store, { cursor = null, limit = DIRECTORY_PAGE_SIZE } = {}) {

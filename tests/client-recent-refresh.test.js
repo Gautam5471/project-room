@@ -227,3 +227,46 @@ test("a window that already holds the whole room counts as a full read: no fill,
   client.connect();
   assert.match(urls.at(-1), /\/stream\?after=11(&|$)/, "the stream resumes after the window read, not from 0");
 });
+
+test("a background fill refused with 401 ends access once, stops retrying and never shows a connection error", async t => {
+  const statuses = [], reads = [];
+  const refused = { ok: false, status: 401, json: async () => ({ error: { code: "invalid_session", message: "Sign in again" } }) };
+  const client = new RoomClient({ onSnapshot: () => {}, onStatus: text => statuses.push(text), fetcher: async url => {
+    reads.push(url);
+    return url === RECENT ? response(recent(9, [message("m3"), message("m4"), message("m5")], 2)) : refused;
+  } });
+  client.session = identity();
+  t.after(() => client.disconnect());
+  await client.refresh();
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  assert.deepEqual(reads, [RECENT, FULL], "one window read, one fill, no retries after a 401");
+  assert.equal(client.session, null, "access ended");
+  assert.equal(statuses.some(text => /Connection interrupted/.test(text)), false);
+});
+
+test("an edit that arrives while only the first window is held reads the full snapshot, not another window", async t => {
+  const edited = history.map(item => item.id === "m1" ? { ...item, body: "edited" } : item);
+  const f = fixture(t, url => url === FULL ? full(10, edited) : recent(10, [message("m3"), message("m4"), message("m5")], 2));
+  await f.client.refresh(); // first window only: the 250ms fill has not run yet
+  assert.equal(f.client.heldMessages().partial, true);
+  await f.client.refresh(hint(10, "message.edited", { messageId: "m1" }));
+  assert.deepEqual(f.reads.slice(0, 2), [RECENT, FULL]);
+  assert.equal(f.seen.at(-1).state.messages.find(item => item.id === "m1").body, "edited");
+  assert.equal(f.client.heldMessages().partial, false);
+});
+
+test("an aborted first window read reports the interruption, then the retry is windowed again, not a full read", async t => {
+  const statuses = [], reads = [];
+  let failNext = true;
+  const client = new RoomClient({ onSnapshot: () => {}, onStatus: text => statuses.push(text), fetcher: async url => {
+    reads.push(url);
+    if (failNext) { failNext = false; throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" }); }
+    return response(recent(9, [message("m3"), message("m4"), message("m5")], 2));
+  } });
+  client.session = identity();
+  t.after(() => client.disconnect());
+  await assert.rejects(client.refresh(), /aborted/);
+  assert.equal(client.heldMessages(), null, "nothing is held after the failed read");
+  await client.refresh();
+  assert.deepEqual(reads, [RECENT, RECENT], "a client holding nothing asks for the window again");
+});

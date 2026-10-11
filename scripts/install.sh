@@ -47,10 +47,14 @@ else
       writeFileSync(path, new Uint8Array(await body.arrayBuffer()));
     };
     const dir = process.env.PROJECT_ROOM_DOWNLOAD_DIR;
+    // Keep the asset name: SHA256SUMS lists the tarball by that name, and
+    // the checksum step matches on it.
+    const name = tarAsset && /^[A-Za-z0-9._-]+\.tar\.gz$/.test(tarAsset.name) ? tarAsset.name : "release.tar.gz";
     await pull(sumsAsset.browser_download_url, dir + "/SHA256SUMS");
-    await pull(tarballUrl, dir + "/release.tar.gz");
+    await pull(tarballUrl, dir + "/" + name);
+    writeFileSync(dir + "/tarball-name", name);
   '
-  tarball="$tmp/release.tar.gz"
+  tarball="$tmp/$(cat "$tmp/tarball-name")"
   sums="$tmp/SHA256SUMS"
 fi
 

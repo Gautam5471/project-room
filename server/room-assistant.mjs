@@ -55,6 +55,13 @@ const deletedControl = run => Object.fromEntries([
   ...['id', 'sourceMessageId', 'initiatorId', 'coordinatorMemberId', 'status', 'revision', 'attemptId', 'createdAt', 'updatedAt', 'hostReportedAt', 'stopOutcome'].map(key => [key, run[key]]),
   ['sourceDeleted', true], ['inputs', []], ['activity', []]
 ]);
+// Reads and receipt replays share current visibility. A committed operation
+// remains idempotent, but its old receipt is not a grant to hidden history.
+const visibleRun = (run, state, actor, floor) => {
+  const opening = state.messages.find(message => message.id === run.sourceMessageId);
+  if (messageVisibleToViewer(opening, actor.id, floor)) return run;
+  return controlsDeletedSource(run, opening, actor, state, floor) ? deletedControl(run) : null;
+};
 // Called only after a validated message edit, inside the command transaction.
 // The run revision fences both publication and acknowledgements: an ID still
 // refers to the same message after editing, but no longer to the same input.
@@ -90,15 +97,10 @@ export class RoomAssistant {
       const state = this.store.room(roomId).state;
       const config = this.config(roomId), coordinator = state.members[config.coordinatorMemberId];
       const floor = historyFloor(this.store.db, state, roomId, auth.member.id);
-      const visible = id => messageVisibleToViewer(state.messages.find(m => m.id === id), auth.member.id, floor);
       // Keep unfinished requests discoverable by their host and controllers;
       // newer terminal history must not push pending work out of this window.
       const runs = this.store.db.prepare("SELECT value FROM room_assistant_runs WHERE room_id=? ORDER BY json_extract(value,'$.status') IN ('done','cancelled','failed'), rowid DESC LIMIT 100").all(roomId)
-        .map(row => JSON.parse(row.value)).flatMap(run => {
-          if (visible(run.sourceMessageId)) return [run];
-          const opening = state.messages.find(m => m.id === run.sourceMessageId);
-          return controlsDeletedSource(run, opening, auth.member, state, floor) ? [deletedControl(run)] : [];
-        })
+        .map(row => visibleRun(JSON.parse(row.value), state, auth.member, floor)).filter(Boolean)
         .map(run => ({ ...run, status: run.status === 'working' && (!Number.isFinite(run.hostReportedAt) || this.store.now() - run.hostReportedAt > hostStaleAfterMs) ? 'unknown' : run.status,
           displayStatus: derivedRunStatus(run, this.store.now()) }));
       const recent = runs.some(run => run.coordinatorMemberId === config.coordinatorMemberId && run.attemptId && Number.isFinite(run.hostReportedAt) && this.store.now() - run.hostReportedAt <= 120000 && !terminal.has(run.status));
@@ -131,12 +133,10 @@ export class RoomAssistant {
       if (old) {
         if (old.input !== canonical) fail('assistant_retry_conflict', 'Retry ID already records different input');
         const response = JSON.parse(old.result);
-        const opening = state.messages.find(m => m.id === response.result?.sourceMessageId);
-        if (opening?.deletedAt) {
-          if (!controlsDeletedSource(response.result, opening, actor, state, floor)) fail('assistant_run_missing', 'Request not found', 404);
-          return { ...response, result: deletedControl(response.result) };
-        }
-        return response;
+        if (input.action === 'configure') return response;
+        const result = visibleRun(response.result, state, actor, floor);
+        if (!result) fail('assistant_run_missing', 'Request not found', 404);
+        return { ...response, result };
       }
       const source = id => {
         const message = state.messages.find(m => m.id === id);

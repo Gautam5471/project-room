@@ -362,8 +362,11 @@ export function setReadHorizon(store, token, roomId, data, expectedSessionBindin
   return store.transaction(() => {
     if (lastReadMessageId !== null) {
       const message = store.room(roomId).state.messages.find(m => m.id === lastReadMessageId);
-      // Same answer for a DM the reader is not party to as for an unknown id.
-      if (!message || !dmVisible(message, member.id)) fail(404, "message_not_found", "No such message in this room");
+      // Same answer for a DM the reader is not party to, and for a message
+      // from before a since_join reactivation, as for an unknown id.
+      if (!message || !dmVisible(message, member.id) || !messageInHistory(message, store.historyFloor(roomId, member.id))) {
+        fail(404, "message_not_found", "No such message in this room");
+      }
     }
     const now = store.now();
     store.db.prepare(

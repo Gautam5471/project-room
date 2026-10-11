@@ -89,3 +89,65 @@ test("the guest upgrade needs the guest's own session and CSRF token", async t =
   assert.equal((await post("/api/auth/guest/upgrade", { email: "not-an-email" }, g)).status, 422);
   assert.equal((await post("/api/auth/guest/upgrade/confirm", { email: "x@example.invalid", code: "123456", password: "short" }, g)).status, 422);
 });
+
+test("a code mailed for one address cannot confirm a different address", async t => {
+  const { f, post, guest, codeFor } = await start(t);
+  const g = guest();
+  await post("/api/auth/guest/upgrade", { email: "a@example.invalid" }, g);
+  const code = codeFor("a@example.invalid");
+  const swapped = await post("/api/auth/guest/upgrade/confirm", { email: "b@example.invalid", code, password: PASSWORD }, g);
+  assert.equal(swapped.status, 401);
+  assert.equal(f.store.accountLogins.listMethods(g.accountId).length, 0, "nothing linked for the other address");
+  const ok = await post("/api/auth/guest/upgrade/confirm", { email: "a@example.invalid", code, password: PASSWORD }, g);
+  assert.equal(ok.status, 200, "the code still works for the address it was sent to");
+});
+
+test("five wrong codes burn the pending code, even the right one is refused after", async t => {
+  const { f, post, guest, codeFor } = await start(t);
+  const g = guest(), email = "cap@example.invalid";
+  await post("/api/auth/guest/upgrade", { email }, g);
+  const code = codeFor(email), wrong = code === "000000" ? "111111" : "000000";
+  for (let i = 0; i < 5; i++) assert.equal((await post("/api/auth/guest/upgrade/confirm", { email, code: wrong, password: PASSWORD }, g)).status, 401);
+  const late = await post("/api/auth/guest/upgrade/confirm", { email, code, password: PASSWORD }, g);
+  assert.equal(late.status, 401, "the code is spent after the attempt cap");
+  assert.equal(f.store.accountLogins.listMethods(g.accountId).length, 0);
+});
+
+test("an address taken after the code went out cannot be confirmed, even with a still-valid code", async t => {
+  const { f, post, guest } = await start(t);
+  const g = guest(), email = "race@example.invalid";
+  await post("/api/auth/guest/upgrade", { email }, g);
+  const s = f.store.createAccountSessionSlot();
+  assert.equal((await post("/api/auth/password/signup", { email, password: PASSWORD, sessionToken: s.token, sessionRevision: s.session.sessionRevision })).status, 202);
+  // The holder's signup replaces pending codes for the address. Re-issue one for the guest so only the route's held-address check can refuse it.
+  const { code } = f.store.accountLogins.issueEmailVerifyCode({ accountId: g.accountId, email });
+  const late = await post("/api/auth/guest/upgrade/confirm", { email, code, password: PASSWORD }, g);
+  assert.equal(late.status, 401);
+  assert.equal((await late.json()).error.code, "invalid_email_code");
+  assert.equal(f.store.accountLogins.listMethods(g.accountId).length, 0);
+});
+
+test("a holder's signup replaces a guest's pending code for the same address", async t => {
+  const { f, post, guest, codeFor } = await start(t);
+  const g = guest(), email = "swap@example.invalid";
+  await post("/api/auth/guest/upgrade", { email }, g);
+  const code = codeFor(email);
+  const s = f.store.createAccountSessionSlot();
+  await post("/api/auth/password/signup", { email, password: PASSWORD, sessionToken: s.token, sessionRevision: s.session.sessionRevision });
+  const late = await post("/api/auth/guest/upgrade/confirm", { email, code, password: PASSWORD }, g);
+  assert.equal(late.status, 401);
+});
+
+test("a guest account can request an upgrade code only a few times, then is rate limited", async t => {
+  const { post, guest } = await start(t);
+  const g = guest();
+  const statuses = [];
+  for (let i = 0; i < 7; i++) statuses.push((await post("/api/auth/guest/upgrade", { email: `n${i}@example.invalid` }, g)).status);
+  assert.deepEqual(statuses.slice(0, 5), [202, 202, 202, 202, 202]);
+  assert.equal(statuses[5], 429, "the sixth request for this account is refused");
+});
+
+test("a guest upgrade request with extra fields is refused", async t => {
+  const { post, guest } = await start(t);
+  assert.equal((await post("/api/auth/guest/upgrade", { email: "x@example.invalid", accountId: "other" }, guest())).status, 422);
+});
