@@ -170,6 +170,70 @@ test("a stale token cannot ack after expiry and reacquisition by another listene
   assert.throws(() => hb.ackWakes({ agentId: "ai_lease", signalIds: ids, fencingToken: lease.fencingToken }),
     err => err instanceof HeartbeatError && err.status === 409 && err.code === "listener_fenced",
     "stale holder's broadcast ack is fenced after reacquisition");
+  assert.throws(() => hb.ackWakes({ agentId: "ai_lease", signalIds: ids, fencingToken: b.fencingToken }),
+    err => err instanceof HeartbeatError && err.status === 409 && err.code === "wake_signal_fenced",
+    "the new holder must claim the abandoned batch before it can ack it");
+  assert.equal(claim(hb, b.fencingToken, 1).signals[0].redelivered, true, "the takeover replays the batch, flagged");
   const ok = hb.ackWakes({ agentId: "ai_lease", signalIds: ids, fencingToken: b.fencingToken });
-  assert.equal(ok.acknowledged.length, 1, "the new live holder drains the batch");
+  assert.equal(ok.acknowledged.length, 1, "the new live holder drains the batch after claiming it");
+});
+
+// Owner fence and atomic claim: a signal belongs to the lease that claimed it.
+function twoScopes(t) {
+  const { hb, advance } = unit(t);
+  hb.heartbeat(wakeable());
+  const room = hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "room-listener", ttlMs: 60000 });
+  const all = hb.acquireListenerLease({ agentId: "ai_lease", roomId: null, listenerId: "all-listener", ttlMs: 60000 });
+  assert.ok(room.acquired && all.acquired);
+  return { hb, advance, room, all };
+}
+const fenced = code => err => err instanceof HeartbeatError && err.status === 409 && err.code === code;
+
+test("a second live scope does not take over signals claimed by a live lease", t => {
+  const { hb, room, all } = twoScopes(t);
+  enqueue(hb, "ai_lease", 1);
+  assert.equal(claim(hb, room.fencingToken, 5).signals.length, 1);
+  const second = hb.claimWakeBatch({ agentId: "ai_lease", roomId: null, fencingToken: all.fencingToken });
+  assert.equal(second.signals.length, 0, "the room scope's live claim is not replayed to the all-rooms scope");
+});
+
+test("a lapsed claim must be claimed again before another lease can ack it", t => {
+  const { hb, advance, room, all } = twoScopes(t);
+  enqueue(hb, "ai_lease", 1);
+  const ids = claim(hb, room.fencingToken, 1).signals.map(s => s.signalId);
+  advance(60001);
+  const fresh = hb.acquireListenerLease({ agentId: "ai_lease", roomId: null, listenerId: "all-listener", ttlMs: 60000 });
+  assert.equal(fresh.fencingToken !== all.fencingToken, true, "the all-rooms lease was re-issued after expiry");
+  assert.throws(() => hb.ackWakes({ agentId: "ai_lease", signalIds: ids, fencingToken: fresh.fencingToken }),
+    fenced("wake_signal_fenced"), "another live lease cannot delete work it never claimed");
+  assert.throws(() => hb.ackWakes({ agentId: "ai_lease", signalIds: ids }),
+    fenced("wake_signal_fenced"), "a tokenless ack cannot either");
+  const replay = hb.claimWakeBatch({ agentId: "ai_lease", roomId: null, fencingToken: fresh.fencingToken });
+  assert.deepEqual(replay.signals.map(s => [s.signalId, s.redelivered]), [[ids[0], true]], "re-claiming replays it, flagged");
+  assert.equal(hb.ackWakes({ agentId: "ai_lease", signalIds: ids, fencingToken: fresh.fencingToken }).acknowledged.length, 1);
+});
+
+test("re-acking a delivered signal stays idempotent whatever the token", t => {
+  const { hb, room } = twoScopes(t);
+  enqueue(hb, "ai_lease", 1);
+  const ids = claim(hb, room.fencingToken, 1).signals.map(s => s.signalId);
+  assert.equal(hb.ackWakes({ agentId: "ai_lease", signalIds: ids, fencingToken: room.fencingToken }).acknowledged.length, 1);
+  assert.deepEqual(hb.ackWakes({ agentId: "ai_lease", signalIds: ids, fencingToken: room.fencingToken }).acknowledged, []);
+  assert.deepEqual(hb.ackWakes({ agentId: "ai_lease", signalIds: ids, roomId: ROOM, fencingToken: room.fencingToken }).acknowledged, []);
+});
+
+test("the claim is fenced against the live lease inside the claiming statement", t => {
+  const { hb, room } = twoScopes(t);
+  enqueue(hb, "ai_lease", 1);
+  // Another process lets the lease lapse after the up-front check but before the insert.
+  const prepare = hb.db.prepare.bind(hb.db);
+  hb.db.prepare = sql => {
+    if (/^\s*INSERT INTO agent_wake_signal_claims/.test(sql)) {
+      hb.db.exec("UPDATE agent_wake_listener_leases SET lease_expires_at = 1 WHERE room_key = '" + ROOM + "'");
+    }
+    return prepare(sql);
+  };
+  const batch = hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: room.fencingToken });
+  assert.equal(batch.signals.length, 0, "a lapsed lease claims nothing");
+  assert.equal(hb.db.prepare("SELECT COUNT(*) AS n FROM agent_wake_signal_claims").get().n, 0, "and records no claim row");
 });
