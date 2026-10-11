@@ -25,13 +25,17 @@ minimum-Node compatibility, production OAuth, or signed desktop readiness.
 - [ ] Record one real end-to-end external agent connection: enrollment, human prompt,
       host receipt, response, disconnect and reconnection. A profile or tool ping is insufficient.
 - [ ] Verify the intended public host's signup, email delivery, login, invitation and recovery.
+- [ ] Triage the 15 open Dependabot alerts (six high) found when alerts were enabled:
+      `relay/package-lock.json` (sharp and undici) and both Cloudflare lockfiles
+      (sharp). Verify reachability, apply compatible fixes and test each package.
+      A clean root `npm ci` audit does not cover these separate dependency trees.
 - [ ] Qualify one exact release commit with the release owner's existing acceptance suite;
       package that revision and publish checksums and known limitations.
 - [ ] For desktop distribution, attach a signed and notarized Mac build and verify a
       downloaded installation and its login return path. Existing runtime archives are not Mac installers.
 - [ ] Capture a short real demonstration of a human task and an agent-produced result.
       Use synthetic content, disclose the setup and exclude credentials/private conversations.
-- [ ] Review public issue labels: move discussion-only items out of `good first issue`,
+- [ ] Finish reviewing public issue labels (#863 no longer carries `good first issue`): move discussion-only items out of `good first issue`,
       and select bounded reproducible tasks with acceptance criteria and a maintainer contact.
 - [ ] Publish a welcome Discussion linking to the merged quickstart and invite reports
       of setup failures. Do not promise support response times we cannot meet.
