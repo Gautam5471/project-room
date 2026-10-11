@@ -404,3 +404,61 @@ for (const [label, viewport] of [["desktop", { width: 1440, height: 1000 }], ["n
     assert.deepEqual(errors, []);
   });
 }
+
+// R26-1 (QA loop r26, 2026-10-10): a member who is reading a little above the
+// newest message (on a phone the Room card alone leaves a fresh load ~150 px off
+// the bottom) sends a message. Their own message must come into view, and the
+// "N new messages · jump to latest" pill must not count it.
+const OWN_SEND_SIZES = [["phone 390", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }], ["desktop 1280", { viewport: { width: 1280, height: 860 } }]];
+for (const [label, size] of OWN_SEND_SIZES) {
+  test(`(${label}) after returning to unread history, sending brings your own message into view, with no "new message" pill for it`, { timeout: 60000 }, async t => {
+    const directory = mkdtempSync(join(tmpdir(), "room-own-send-"));
+    const store = new RoomStore(join(directory, "room.sqlite"));
+    store.initialize(initialRoom());
+    const owner = store.issueAccessKey("commons", "owner");
+    const send = (type, data) => store.command(owner, "commons", { id: crypto.randomUUID(), type, data });
+    send(T.MEMBER_ADDED, { memberId: "maya", displayName: "Maya", kind: "human", permissions: [] });
+    send(T.MESSAGE_POSTED, { messageId: "hello", body: "Welcome, Maya" });
+    const maya = store.issueAccessKey("commons", "maya");
+    const server = createRoomServer({ store, streamInterval: 40 });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const browser = await chromium.launch({ headless: true, ...(process.env.ROOM_TEST_CHROMIUM_PATH ? { executablePath: process.env.ROOM_TEST_CHROMIUM_PATH } : {}) });
+    t.after(async () => {
+      await browser.close(); server.closeStreams(); server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve)); store.close(); rmSync(directory, { recursive: true, force: true });
+    });
+    const page = await (await browser.newContext({ ...size, reducedMotion: "reduce" })).newPage();
+    page.setDefaultTimeout(10000);
+    const errors = []; page.on("pageerror", e => errors.push(e.message));
+    await page.goto(origin);
+    await page.locator("#auth-panel").waitFor({ state: "visible" });
+    await signInFixture(page, maya);
+    await page.locator("#main").waitFor({ state: "visible" });
+    await page.locator("#message-list").getByText("Welcome, Maya").waitFor();
+    await page.waitForTimeout(1500); // Maya has read the room; her read cursor is saved.
+    // While Maya is away the room moves on: she comes back to unread history.
+    for (let i = 0; i < 24; i++) send(T.MESSAGE_POSTED, { messageId: `m${i}`, body: `While you were away ${i}` });
+    await page.reload();
+    await page.locator("#main").waitFor({ state: "visible" });
+    await page.locator("#message-list").getByText("While you were away 23").waitFor({ state: "attached" });
+    await page.waitForTimeout(500);
+    // Maya reads a little above the newest message (on a phone the Room card and
+    // composer status alone push the list ~150 px off the bottom after load).
+    await page.locator("#message-list").evaluate(l => { l.scrollTop = Math.max(0, l.scrollHeight - l.clientHeight - 200); });
+    await page.waitForTimeout(200);
+    const list = page.locator("#message-list");
+    for (const [n, body] of [[1, "first thing I say here"], [2, "and a second one"]]) {
+      await page.locator("#message-input").fill(body);
+      await page.locator('#message-form button[type="submit"]').click();
+      const mine = list.locator("li").filter({ hasText: body }).last();
+      await mine.waitFor({ state: "visible" });
+      await page.waitForTimeout(400);
+      const box = await list.boundingBox(), row = await mine.boundingBox();
+      assert.ok(row.y + row.height <= box.y + box.height + 1 && row.y >= box.y - 1,
+        `send ${n}: own message is inside the visible message list (row ${Math.round(row.y)}-${Math.round(row.y + row.height)}, list ${Math.round(box.y)}-${Math.round(box.y + box.height)})`);
+      assert.equal(await page.locator("#new-messages-button").isVisible(), false, `send ${n}: no "jump to latest" pill for your own message`);
+    }
+    assert.deepEqual(errors, []);
+  });
+}
