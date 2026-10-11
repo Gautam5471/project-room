@@ -19,14 +19,17 @@ export const OPEN_QUESTIONS_MAX_LIMIT = 100;
 const EXCERPT_LENGTH = 160;
 
 // A message's thread root: itself when top-level. Walks the reply chain so
-// every message in one conversation shares a root.
+// every message in one conversation shares a root. A parent that is not in
+// this projection is still the shared root — two replies to the same missing
+// id are one thread. Stopping on the child splits that thread and leaves an
+// answered question open.
 function threadRootOf(byId, messageId) {
   let node = byId.get(messageId);
   const seen = new Set();
   while (node?.replyToId && !seen.has(node.id)) {
     seen.add(node.id);
     const parent = byId.get(node.replyToId);
-    if (!parent) break;
+    if (!parent) return node.replyToId;
     node = parent;
   }
   return node?.id ?? messageId;
