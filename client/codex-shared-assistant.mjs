@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { RoomAgentClient } from "./room-agent.mjs";
 import { createCodexRuntimeHost } from "./codex-runtime.mjs";
-import { createRoomClient } from "../scripts/room-assistant-scratch.mjs";
+import { createRoomClient } from "./room-assistant-client.mjs";
 
 const digest = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const stops = new Set(["pause_requested", "cancel_requested"]);
