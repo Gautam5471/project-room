@@ -4657,11 +4657,15 @@ document.addEventListener("toggle", event => {
   const composer = document.querySelector("#message-form")?.getBoundingClientRect();
   const timeline = document.querySelector(".timeline")?.getBoundingClientRect();
   if (menu && menuOpensUp({ triggerTop: trigger.top, triggerBottom: trigger.bottom, menuHeight: menu.getBoundingClientRect().height + 4,
-    limitTop: Math.max(0, timeline?.top ?? 0), limitBottom: Math.min(window.innerHeight, composer?.top ?? window.innerHeight) })) more.classList.add("message-more-up");
+    limitTop: Math.max(0, timeline?.top ?? 0), limitBottom: Math.min(window.innerHeight, composer?.top ?? window.innerHeight, timeline?.bottom ?? window.innerHeight) })) more.classList.add("message-more-up");
   // On a phone the right-aligned menu can start left of the screen (R41-1):
   // anchor it to the trigger's left edge instead.
   more.classList.remove("message-more-start");
   if (menu && menu.getBoundingClientRect().left < 0) more.classList.add("message-more-start");
+  // Taller than the room on either side (R60-1: own messages add Edit/Delete):
+  // scroll the timeline just enough to bring the whole menu into view.
+  const placed = menu?.getBoundingClientRect();
+  if (placed && timeline && (placed.top < timeline.top || placed.bottom > Math.min(timeline.bottom, composer?.top ?? Infinity))) menu.scrollIntoView({ block: "nearest" });
 }, true);
 document.addEventListener("focusin", event => {
   for (const menu of document.querySelectorAll(".message-more[open]")) {
