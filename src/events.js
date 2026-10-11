@@ -1026,8 +1026,11 @@ function changeMemberAccess(state, incoming) {
   // grant (or strip) administration on a non-owner agent.
   const isOwnerGrant = incoming.actorId === state.room.ownerId;
   validatePermissions(incoming.data.permissions, member.kind, false, isOwnerGrant);
+  // A self-leave with unchanged permissions grants and removes no authority,
+  // so the scoped-administration rule does not apply to it. Without this,
+  // an invite_member-only human could not leave (account deletion: 422).
   if (incoming.data.authorityPolicyVersion === MEMBERSHIP_AUTHORITY_POLICY_VERSION) {
-    requireScopedMemberAdministration(state, incoming.actorId, member.id, member, incoming.data.permissions);
+    if (!isLeaveRequest(state, incoming)) requireScopedMemberAdministration(state, incoming.actorId, member.id, member, incoming.data.permissions);
   } else if (incoming.data.authorityPolicyVersion != null && incoming.data.authorityPolicyVersion !== 1) {
     throw new Error("Unsupported membership authority policy");
   }
