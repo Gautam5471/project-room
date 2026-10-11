@@ -1,18 +1,5 @@
-// Bolter steal #5: durable listener queue — single-listener leases with
-// fencing tokens, atomic batch claims, and redelivery flags on the agent
-// wake-signal queue (server/agent-heartbeats.mjs).
-//
-// Contracts under test:
-//  1. One listener lease per (agent, room): a second listener is refused
-//     and the running listener is named.
-//  2. The same listener renews its own lease (same fencing token).
-//  3. An expired lease can be re-acquired by another listener.
-//  4. claimWakeBatch claims a batch atomically; acks are fenced: a wrong
-//     or missing token is rejected while the lease is live.
-//  5. A batch claimed by a dead listener is redelivered with redelivered:true.
-//  6. releaseListenerLease frees the batch for prompt redelivery.
-//  7. Without any lease, ackWakes keeps its old behavior (backward compat).
-//  8. Leases are room-scoped.
+// Bolter steal #5: single-listener leases with fencing tokens, atomic
+// batch claims, and redelivery flags on the wake-signal queue.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -27,9 +14,8 @@ function unit(t) {
   const db = new DatabaseSync(":memory:");
   db.exec(agentHeartbeatSchema);
   let at = T0;
-  const hb = new AgentHeartbeats({ db, now: () => at }, {});
   t.after(() => db.close());
-  return { hb, db, advance: ms => { at += ms; }, at: () => at };
+  return { hb: new AgentHeartbeats({ db, now: () => at }, {}), advance: ms => { at += ms; } };
 }
 
 const wakeable = (agentId = "ai_lease", hostId = "host-1") =>
@@ -160,10 +146,10 @@ test("leases are room-scoped", t => {
 test("lease inputs are validated", t => {
   const { hb } = unit(t);
   hb.heartbeat(wakeable());
-  assert.throws(() => hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "bad id!", ttlMs: 60000 }),
-    err => err instanceof HeartbeatError && err.status === 422);
-  assert.throws(() => hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 0 }),
-    err => err instanceof HeartbeatError && err.status === 422);
-  assert.throws(() => hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: "x", limit: 0 }),
-    err => err instanceof HeartbeatError && err.status === 422);
+  const bad = [
+    () => hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "bad id!", ttlMs: 60000 }),
+    () => hb.acquireListenerLease({ agentId: "ai_lease", roomId: ROOM, listenerId: "listener-a", ttlMs: 0 }),
+    () => hb.claimWakeBatch({ agentId: "ai_lease", roomId: ROOM, fencingToken: "x", limit: 0 }),
+  ];
+  for (const fn of bad) assert.throws(fn, err => err instanceof HeartbeatError && err.status === 422);
 });

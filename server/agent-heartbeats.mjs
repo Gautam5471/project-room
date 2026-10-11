@@ -93,13 +93,11 @@ export const agentHeartbeatSchema = `
 // statement boundaries and SQL comments between statements break it.)
 
 // Bolter steal #5 — durable listener queue: single-listener leases with
-// fencing tokens, atomic batch claims, and redelivery flags. These tables
-// are intentionally NOT part of agentHeartbeatSchema: they are created
-// lazily by ensureListenerSchema() (CREATE TABLE IF NOT EXISTS), so old
-// databases keep passing the strict DDL-text verifySchema and the lease
-// API is self-sufficient without a store.mjs migration hook. Signals still
-// leave the queue only through ackWakes(); the lease layer only decides
-// WHO may claim and ack them.
+// fencing tokens, atomic batch claims, and redelivery flags. Kept OUT of
+// agentHeartbeatSchema and created lazily (CREATE TABLE IF NOT EXISTS), so
+// old databases keep passing the strict DDL-text verifySchema and no
+// store.mjs migration hook is needed. Signals leave the queue only through
+// ackWakes(); the lease layer only decides WHO may claim and ack them.
 export const wakeListenerLeaseSchema = `
   CREATE TABLE IF NOT EXISTS agent_wake_listener_leases (
     agent_id TEXT NOT NULL, room_key TEXT NOT NULL DEFAULT '',
@@ -115,19 +113,8 @@ export const wakeListenerLeaseSchema = `
   CREATE INDEX IF NOT EXISTS agent_wake_signal_claims_agent ON agent_wake_signal_claims(agent_id, claimed_at);
 `;
 // A claim is abandoned when its fencing token no longer holds a live lease;
-// redelivery then replays the batch with redelivered=true. Lease TTLs are
-// caller-chosen; the default covers one long-poll cycle plus slack.
+// redelivery replays the batch with redelivered=true.
 export const WAKE_LISTENER_LEASE_TTL_MS = 60000;
-
-// node:sqlite's DatabaseSync has no .transaction() helper: serialize the
-// claim check+insert with explicit BEGIN IMMEDIATE, nesting-safe via
-// isTransaction (same shape as server/spend-grants.mjs).
-function transact(db, fn) {
-  if (db.isTransaction) return fn();
-  db.exec("BEGIN IMMEDIATE");
-  try { const result = fn(); db.exec("COMMIT"); return result; }
-  catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
-}
 
 export class HeartbeatError extends Error {
   constructor(status, code, message) {
@@ -561,14 +548,10 @@ export class AgentHeartbeats {
     return result;
   }
 
-  // Mark wake signals delivered after the host handled them. Returns the
-  // ids that were actually pending (unknown or already-delivered ids are
-  // reported, not applied — ack is idempotent).
-  //
-  // Single-listener fencing: while a listener lease is live for the agent's
-  // room, acks must carry that lease's fencing token or they are rejected
-  // with 409 listener_fenced. With no lease in effect the call behaves
-  // exactly as before (backward compatible).
+  // Mark wake signals delivered after the host handled them (ack is
+  // idempotent). While a listener lease is live for the agent's room, acks
+  // must carry that lease's fencing token or they get 409 listener_fenced;
+  // with no lease the call behaves exactly as before (backward compatible).
   ackWakes({ agentId, signalIds, roomId = null, fencingToken = null }) {
     checkAgentId(agentId);
     check(Array.isArray(signalIds) && signalIds.length > 0
@@ -594,9 +577,7 @@ export class AgentHeartbeats {
     return Object.freeze({ acknowledged: Object.freeze(acknowledged) });
   }
 
-  // Idempotent DDL for the listener-lease tables. Called by the lease API
-  // itself so the feature needs no store.mjs migration hook; CREATE TABLE
-  // IF NOT EXISTS is a no-op on warm databases.
+  // Idempotent DDL for the lease tables (no-op on warm databases).
   ensureListenerSchema() {
     this.db.exec(wakeListenerLeaseSchema);
     return this;
@@ -608,13 +589,9 @@ export class AgentHeartbeats {
     return roomId ?? "";
   }
 
-  // Acquire the single listener lease for (agentId, roomId). At most one
-  // live lease exists per agent and room: a second listener is refused and
-  // the refusal names the running listener (Bolter's "second listener
-  // names the first" rule). The same listenerId renews its own lease and
-  // keeps its fencing token so in-flight acks stay valid. An expired lease
-  // is free for anyone. Returns { acquired, fencingToken?, listenerId?,
-  // renewed?, activeListenerId?, leaseExpiresAt? }.
+  // One live lease per (agent, room): a second listener is refused and the
+  // refusal names the running listener. The same listenerId renews its own
+  // lease and keeps its fencing token; an expired lease is free for anyone.
   acquireListenerLease({ agentId, roomId = null, listenerId, ttlMs = WAKE_LISTENER_LEASE_TTL_MS }) {
     checkAgentId(agentId);
     const roomKey = this.roomKeyOf(roomId);
@@ -646,12 +623,13 @@ export class AgentHeartbeats {
     return Object.freeze({ acquired: true, fencingToken, listenerId, renewed: false, leaseExpiresAt: at + ttlMs });
   }
 
-  // Atomically claim the oldest unacked wake signals as one batch for the
-  // fencing-token holder. Signals already claimed by a live lease (i.e. by
-  // this same token) are skipped; signals whose claim's token no longer
-  // holds a live lease are reclaimed with redelivered=true. Requires a live
-  // lease for the token — otherwise 409 stale_listener. Claimed signals
-  // still leave the queue only through ackWakes().
+  // Claim the oldest unacked wake signals as one atomic batch for the
+  // fencing-token holder. A single INSERT...SELECT is implicitly atomic, so
+  // no explicit transaction is needed. Signals already claimed by this same
+  // token are skipped; signals whose token no longer holds a live lease are
+  // reclaimed with redelivered=true. Requires a live lease for the token —
+  // otherwise 409 stale_listener. Claimed signals leave the queue only
+  // through ackWakes().
   claimWakeBatch({ agentId, roomId = null, fencingToken, limit = MAX_PENDING_WAKES }) {
     checkAgentId(agentId);
     const roomKey = this.roomKeyOf(roomId);
@@ -665,34 +643,27 @@ export class AgentHeartbeats {
       FROM agent_wake_listener_leases WHERE agent_id=? AND room_key=?`).get(agentId, roomKey);
     if (!lease || lease.leaseExpiresAt <= at || lease.fencingToken !== fencingToken)
       fail(409, "stale_listener", "no live listener lease for this fencing token — acquire a lease first");
-    return transact(this.db, () => {
-      const rows = this.db.prepare(`
-        SELECT s.*, CASE WHEN c.signal_id IS NULL THEN 0 ELSE 1 END AS was_claimed
+    const claimed = this.db.prepare(`INSERT INTO agent_wake_signal_claims
+        (signal_id, agent_id, claimed_by, claimed_at, redelivered)
+        SELECT s.signal_id, ?, ?, ?, CASE WHEN c.signal_id IS NULL THEN 0 ELSE 1 END
         FROM agent_wake_signals s
         LEFT JOIN agent_wake_signal_claims c ON c.signal_id = s.signal_id
         WHERE s.agent_id=? AND s.delivered_at IS NULL AND (? IS NULL OR s.room_id=?)
           AND (c.signal_id IS NULL OR c.claimed_by != ?)
-        ORDER BY s.created_at ASC LIMIT ?`)
-        .all(agentId, roomId, roomId, fencingToken, limit);
-      const upsert = this.db.prepare(`INSERT INTO agent_wake_signal_claims
-        (signal_id, agent_id, claimed_by, claimed_at, redelivered)
-        VALUES (?, ?, ?, ?, ?)
+        ORDER BY s.created_at ASC LIMIT ?
         ON CONFLICT(signal_id) DO UPDATE SET claimed_by=excluded.claimed_by,
-          claimed_at=excluded.claimed_at, redelivered=excluded.redelivered`);
-      const signals = rows.map(row => {
-        const redelivered = row.was_claimed === 1;
-        upsert.run(row.signal_id, agentId, fencingToken, at, redelivered ? 1 : 0);
-        const { was_claimed: _dropped, ...signal } = row;
-        return Object.freeze({ ...signalView(signal), redelivered });
-      });
-      return Object.freeze({ signals: Object.freeze(signals) });
-    });
+          claimed_at=excluded.claimed_at, redelivered=excluded.redelivered
+        RETURNING signal_id, redelivered`)
+      .all(agentId, fencingToken, at, agentId, roomId, roomId, fencingToken, limit);
+    const views = this.db.prepare("SELECT * FROM agent_wake_signals WHERE signal_id=?");
+    const signals = claimed.map(({ signal_id, redelivered }) =>
+      Object.freeze({ ...signalView(views.get(signal_id)), redelivered: redelivered === 1 }));
+    return Object.freeze({ signals: Object.freeze(signals) });
   }
 
-  // Release a listener lease. The holder's unacked batch claims are freed
-  // at once — marked redelivered so the next listener's claim replays them
-  // immediately (flagged) instead of waiting out the lease TTL. A wrong
-  // token releases nothing.
+  // Release a listener lease. The holder's unacked claims are freed at once —
+  // marked redelivered so the next claim replays them immediately (flagged).
+  // A wrong token releases nothing.
   releaseListenerLease({ agentId, roomId = null, fencingToken }) {
     checkAgentId(agentId);
     const roomKey = this.roomKeyOf(roomId);
