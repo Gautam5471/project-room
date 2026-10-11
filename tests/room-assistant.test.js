@@ -7,6 +7,7 @@ import { createRoomServer } from '../server/http.mjs';
 import { RoomStore } from '../server/store.mjs';
 import { join } from 'node:path';
 import { RoomAssistant } from '../server/room-assistant.mjs';
+import { demoteToReadonly } from '../server/autonomy-tiers.mjs';
 
 async function setup(t) {
   const f = createAcceptanceFixture({ dmConsent: true });
@@ -538,4 +539,31 @@ test('ask card statuses: 10s-not-picked-up and 2min-stalled', async t => {
   // A fresh host report clears the stall.
   await api('producer',{action:'report',runId:'busy',attemptId:'host-1',expectedRevision:1,state:'working',summary:'Still on it.'});
   assert.equal((await statuses()).get('busy'),'working');
+});
+
+// R36-2 (repro for the owner; expected behaviour, red on 1e8982e2). The
+// autonomy-tier contract says a read-only agent's stops always land
+// (server/autonomy-tiers.mjs T1_READONLY_ALLOWED_COMMANDS), but the shared
+// assistant refuses every coordinator report from a t1_readonly host, and
+// resume does not check the tier at all.
+const r36Paused = async (api, runId) => {
+  await api('owner',{action:'configure',expectedRevision:0,name:'Room',coordinatorMemberId:'producer'});
+  await api('owner',{action:'invoke',runId,sourceMessageId:'test-welcome'});
+  await api('producer',{action:'claim',runId,attemptId:'original',expectedRevision:0});
+};
+test('R36-2: a coordinator demoted to read-only can still acknowledge a stop', async t => {
+  const { f, api } = await setup(t);
+  await r36Paused(api, 'r36-stop');
+  demoteToReadonly(f.store.db, 'commons', 'producer', { updatedBy: 'owner' });
+  const stop = await api('owner',{action:'cancel',runId:'r36-stop',expectedRevision:1});
+  assert.equal(stop.result.status, 'cancel_requested');
+  await api('producer',{action:'report',runId:'r36-stop',attemptId:'original',expectedRevision:2,state:'cancelled',summary:'Stopped.'});
+});
+test('R36-2: resume is refused up front when the coordinator was demoted to read-only while paused', async t => {
+  const { f, api } = await setup(t);
+  await r36Paused(api, 'r36-resume');
+  await api('owner',{action:'pause',runId:'r36-resume',expectedRevision:1});
+  await api('producer',{action:'report',runId:'r36-resume',attemptId:'original',expectedRevision:2,state:'paused',summary:'Paused.'});
+  demoteToReadonly(f.store.db, 'commons', 'producer', { updatedBy: 'owner' });
+  await api('owner',{action:'resume',runId:'r36-resume',expectedRevision:3}, 409);
 });
