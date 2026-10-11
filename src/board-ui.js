@@ -207,10 +207,14 @@ export function paintClaimChat(state, list) {
   }
 }
 
+const FULL_SHA = /^[0-9a-f]{40}$/;
 function liveLabel(status) {
-  if (!status || typeof status.behind !== "number") return "Deploy status unknown";
-  if (status.behind === 0) return "Live matches main";
-  if (status.behind > 0) return "Live is behind main";
+  // The server sends behind = 0 when live and main match and null otherwise,
+  // never a count, so a known mismatch has to be read from the two shas. A
+  // held (stale) read can lag a fresh deploy, so it stays unknown.
+  if (status && status.behind === 0) return "Live matches main";
+  if (status && typeof status.behind === "number" && status.behind > 0) return "Live is behind main";
+  if (status && !status.stale && FULL_SHA.test(status.live ?? "") && FULL_SHA.test(status.main ?? "") && status.live !== status.main) return uiText("board.live.differs");
   return "Deploy status unknown";
 }
 
