@@ -480,6 +480,7 @@ export class DraftRecovery {
         [id, { body: d.body, toMemberId: d.toMemberId, replyToId: d.replyToId,
           ...(typeof d.channelId === "string" ? { channelId: d.channelId } : {}),
           ...(d.mode ? { mode: d.mode, threadId: d.threadId } : {}),
+          ...(d.assistantDraft ? { assistantDraft: d.assistantDraft } : {}),
           pending: d.pending ? { id: d.pending.command.id, messageId: d.pending.command.data.messageId, contents: d.pending.contents } : null }]);
       this.storage.setItem(this.key, JSON.stringify({ scope, expires: this.now() + 12 * 60 * 60 * 1000, threadId, activeKey, entries }));
       this.storage.removeItem("project-room:drafts:v2");
@@ -530,14 +531,25 @@ export class DraftRecovery {
             mode: d.mode, threadId: d.threadId, channelId, pending });
           continue;
         }
+        let assistantDraft = null;
+        if (d.assistantDraft) {
+          const input = d.assistantDraft, source = index.byId.get(input.sourceMessageId);
+          if (!source || source.deletedAt || source.toMemberId || d.toMemberId || d.replyToId !== source.id
+            || channelId !== (source.channelId ?? "general") || !['contribute', 'resolve'].includes(input.action)
+            || typeof input.runId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.runId)
+            || id !== ['assistant', input.runId].join(':') || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+            || input.action === 'contribute' && typeof input.conflict !== 'boolean') continue;
+          assistantDraft = { action: input.action, runId: input.runId, sourceMessageId: source.id,
+            expectedRevision: input.expectedRevision, ...(input.action === 'contribute' ? { conflict: input.conflict } : {}) };
+        }
         const channelRoot = id === null || isChannelDraftKey(id);
         const draftId = channelRoot ? channelDraftKey(channelId ?? "general") : id;
         if (isChannelDraftKey(id) && id !== draftId) continue;
         if (channelId && channelId !== "general" && !state.channels?.[channelId]) continue;
-        if (!channelRoot && !index.threads.has(id)) continue;
+        if (!channelRoot && !assistantDraft && !index.threads.has(id)) continue;
         if (typeof d.body !== "string" || typeof d.toMemberId !== "string") continue;
         if (d.toMemberId && (!state.members[d.toMemberId] || state.members[d.toMemberId].active === false)) continue;
-        if (d.replyToId !== null && (!index.byId.has(d.replyToId) || !channelRoot && index.rootById.get(d.replyToId) !== id
+        if (d.replyToId !== null && (!index.byId.has(d.replyToId) || !channelRoot && !assistantDraft && index.rootById.get(d.replyToId) !== id
           || channelRoot && (index.byId.get(d.replyToId).channelId ?? "general") !== (channelId ?? "general"))) continue;
         // The current client has separate command and message identities. Preserve
         // both, then recompute the entire permitted payload before accepting a retry.
@@ -549,7 +561,7 @@ export class DraftRecovery {
         const contents = JSON.stringify({ type: "message.posted", data, causationId: null });
         const pending = messageIdValid && d.pending?.contents === contents && typeof d.pending.id === "string" && /^[a-zA-Z0-9-]{1,100}$/.test(d.pending.id)
           ? { contents, command: { id: d.pending.id, type: "message.posted", data } } : null;
-        drafts.save(draftId, { ...data, body: d.body, toMemberId: d.toMemberId, pending });
+        drafts.save(draftId, { ...data, body: d.body, toMemberId: d.toMemberId, pending, ...(assistantDraft ? { assistantDraft } : {}) });
         restoredKeys.set(id, draftId);
       }
       let activeKey = restoredKeys.has(saved.activeKey) ? restoredKeys.get(saved.activeKey)
@@ -558,7 +570,7 @@ export class DraftRecovery {
       if (active?.channelId && state.channels?.[active.channelId]?.archivedAt) activeKey = null;
       const selected = drafts.entries.get(activeKey);
       return { drafts, activeKey, channelId: selected?.channelId ?? "general",
-        threadId: selected?.mode ? selected.threadId : isChannelDraftKey(activeKey) ? null : activeKey };
+        threadId: selected?.assistantDraft ? index.rootById.get(selected.assistantDraft.sourceMessageId) : selected?.mode ? selected.threadId : isChannelDraftKey(activeKey) ? null : activeKey };
     } catch { this.clear(); return null; }
   }
 }

@@ -72,6 +72,16 @@ test("exact-commit runtime package verifies cold, excludes private state and pre
     assert.deepEqual(JSON.parse(cold.stdout), { tools: toolCount, assistantTools: packagedTools.includes("...assistantTools") ? ["room_assistant_context", "room_assistant_action"] : [], helper: "function",
       command: { id: "cold-package", type: "work.accepted", data: { workItemId: "work", expectedRevision: 0 } } });
   }
+  if (existsSync(join(destination, "scripts/run-codex-room.mjs"))) {
+    const cold = spawnSync(process.execPath, [join(destination, "scripts/run-codex-room.mjs"), "--help"], {
+      cwd: directory, env: { PATH: "/unavailable" }, encoding: "utf8"
+    });
+    assert.equal(cold.status, 0, cold.stderr);
+    assert.match(cold.stdout, /RUN_ID/);
+    assert.equal(existsSync(join(destination, "docs/CODEX-ROOM-HOST.md")), true);
+    assert.equal(existsSync(join(destination, "scripts/room-assistant-scratch.mjs")), false);
+    assert.equal(existsSync(join(destination, "scripts/acceptance-fixture.mjs")), false);
+  }
   assert.throws(() => verifyRuntimePackage(destination, { expectedCommit: "0".repeat(40) }));
   const { buildAssets, assetPaths: committedAssets } = await import(pathToFileURL(join(destination, "cloudflare/build-assets.mjs")));
   const { templateAssetPaths: committedTemplates } = await import(pathToFileURL(join(destination, "deploy/public-assets.mjs")));
@@ -247,4 +257,16 @@ test("uncommitted candidate packages cold in an isolated synthetic commit, inclu
   const cold = spawnSync(process.execPath, ["--input-type=module", "-e", program], { cwd: directory, env: { PATH: "/unavailable" }, encoding: "utf8" });
   assert.equal(cold.status, 0, cold.stderr); assert.deepEqual(JSON.parse(cold.stdout), { version: 3, pending: 0, unchanged: true });
   assert.deepEqual(verifyRuntimePackage(destination), receipt);
+});
+
+
+test("Codex host entrypoint and every dependency ship without scratch demo fixtures", () => {
+  const entry = "scripts/run-codex-room.mjs";
+  const closure = new Set([entry, ...importClosure(entry, repository)]);
+  assert.deepEqual([...closure].filter(path => !allowed.has(path)), []);
+  assert.equal(closure.has("client/codex-runtime.mjs"), true);
+  assert.equal(closure.has("client/codex-shared-assistant.mjs"), true);
+  assert.equal(closure.has("client/codex-stdio.mjs"), true);
+  assert.equal(closure.has("scripts/room-assistant-scratch.mjs"), false);
+  assert.equal(closure.has("scripts/acceptance-fixture.mjs"), false);
 });

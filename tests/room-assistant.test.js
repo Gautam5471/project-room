@@ -7,6 +7,7 @@ import { createRoomServer } from '../server/http.mjs';
 import { RoomStore } from '../server/store.mjs';
 import { join } from 'node:path';
 import { RoomAssistant } from '../server/room-assistant.mjs';
+import { demoteToReadonly } from '../server/autonomy-tiers.mjs';
 
 async function setup(t) {
   const f = createAcceptanceFixture({ dmConsent: true });
@@ -277,7 +278,7 @@ test('hosted MCP discovers scoped coordinator tools and executes the real public
   const catalog=await rpc('tools/list',{focus:'work'});
   assert.ok(catalog.result.tools.some(tool=>tool.name==='room_assistant_context'));
   const action=catalog.result.tools.find(tool=>tool.name==='room_assistant_action');
-  assert.deepEqual(action.inputSchema.properties.action.enum,['claim','report','publish']);
+  assert.deepEqual(action.inputSchema.properties.action.enum,['claim','report','publish','draft']);
   assert.equal(action.inputSchema.additionalProperties,false);
   assert.ok(action.inputSchema.allOf.length>0);
   const context=await call('room_assistant_context',{});
@@ -287,12 +288,16 @@ test('hosted MCP discovers scoped coordinator tools and executes the real public
   const claimed=await call('room_assistant_action',args);
   assert.equal(claimed.result.structuredContent.result.status,'working');
   assert.deepEqual((await call('room_assistant_action',args)).result.structuredContent,claimed.result.structuredContent);
+  const drafted=await call('room_assistant_action',{...args,action:'draft',requestId:'mcp-draft',expectedRevision:1,sequence:1,body:'A shared answer is forming.'});
+  assert.equal(drafted.result.structuredContent.result.answerDraft.body,'A shared answer is forming.');
+  assert.equal(drafted.result.structuredContent.result.revision,1);
   assert.ok((await call('room_assistant_action',{...args,action:'configure'})).error);
   assert.ok((await call('room_assistant_action',{...args,summary:'Cannot sneak report fields into claim'})).error);
   const posted=await call('room_post_message',{id:'shared-result-command',messageId:'mcp-result',body:'Combined shared answer.'});
   assert.notEqual(posted.result?.isError,true);
   const completed=await call('room_assistant_action',{action:'report',requestId:'mcp-complete',runId:'mcp-shared',attemptId:'saved-host-attempt',expectedRevision:1,state:'done',summary:'Shared answer ready.',resultMessageId:'mcp-result',appliedInputMessageIds:['test-welcome']});
   assert.equal(completed.result.structuredContent.result.status,'done');
+  assert.equal(completed.result.structuredContent.result.answerDraft,undefined);
   assert.equal((await api('guest')).runs[0].resultMessageId,'mcp-result');
   setTier(f.store.db,'commons',memberId,'t1_readonly',{updatedBy:'owner',nowMs:f.store.now()});
   const readonly=await rpc('tools/list',{focus:'work'});
@@ -488,6 +493,9 @@ test('cancel on a silent host completes immediately and revokes the attempt (ind
   const stopped = await api('owner',{action:'cancel',runId:'silent',expectedRevision:1});
   assert.equal(stopped.result.status,'cancelled');
   assert.equal(stopped.result.attemptId,null);
+  assert.equal(stopped.result.stopOutcome,'attempt_revoked');
+  assert.equal((await api('owner')).runs[0].displayStatus,'unknown');
+  assert.match(stopped.result.activity.at(-1).summary,/execution could not be confirmed/i);
   // The revoked attempt can no longer report or publish.
   await api('producer',{action:'report',runId:'silent',attemptId:'host-1',expectedRevision:2,state:'cancelled',summary:'Late ack'},409);
   await api('producer',{action:'publish',runId:'silent',attemptId:'host-1',expectedRevision:2,summary:'Late.',body:'Late answer.',appliedInputMessageIds:['silent-opening']},409);
@@ -531,4 +539,50 @@ test('ask card statuses: 10s-not-picked-up and 2min-stalled', async t => {
   // A fresh host report clears the stall.
   await api('producer',{action:'report',runId:'busy',attemptId:'host-1',expectedRevision:1,state:'working',summary:'Still on it.'});
   assert.equal((await statuses()).get('busy'),'working');
+});
+
+// R36-2 (repro for the owner; expected behaviour, red on 1e8982e2). The
+// autonomy-tier contract says a read-only agent's stops always land
+// (server/autonomy-tiers.mjs T1_READONLY_ALLOWED_COMMANDS), but the shared
+// assistant refuses every coordinator report from a t1_readonly host, and
+// resume does not check the tier at all.
+const r36Paused = async (api, runId) => {
+  await api('owner',{action:'configure',expectedRevision:0,name:'Room',coordinatorMemberId:'producer'});
+  await api('owner',{action:'invoke',runId,sourceMessageId:'test-welcome'});
+  await api('producer',{action:'claim',runId,attemptId:'original',expectedRevision:0});
+};
+test('R36-2: a coordinator demoted to read-only can still acknowledge a stop', async t => {
+  const { f, api } = await setup(t);
+  await r36Paused(api, 'r36-stop');
+  demoteToReadonly(f.store.db, 'commons', 'producer', { updatedBy: 'owner' });
+  const stop = await api('owner',{action:'cancel',runId:'r36-stop',expectedRevision:1});
+  assert.equal(stop.result.status, 'cancel_requested');
+  await api('producer',{action:'report',runId:'r36-stop',attemptId:'original',expectedRevision:2,state:'cancelled',summary:'Stopped.'});
+});
+test('R36-2: resume is refused up front when the coordinator was demoted to read-only while paused', async t => {
+  const { f, api } = await setup(t);
+  await r36Paused(api, 'r36-resume');
+  await api('owner',{action:'pause',runId:'r36-resume',expectedRevision:1});
+  await api('producer',{action:'report',runId:'r36-resume',attemptId:'original',expectedRevision:2,state:'paused',summary:'Paused.'});
+  demoteToReadonly(f.store.db, 'commons', 'producer', { updatedBy: 'owner' });
+  await api('owner',{action:'resume',runId:'r36-resume',expectedRevision:3}, 409);
+});
+
+
+test('demoted Stop acknowledgment is exact-attempt and cannot acknowledge inputs or keep working', async t => {
+  const { f, api } = await setup(t);
+  await r36Paused(api, 'restricted-stop');
+  demoteToReadonly(f.store.db, 'commons', 'producer', { updatedBy: 'owner' });
+  const report={action:'report',runId:'restricted-stop',attemptId:'original',expectedRevision:1,state:'cancelled',summary:'Stopped.'};
+  await api('producer',report,403);
+  await api('owner',{action:'pause',runId:'restricted-stop',expectedRevision:1});
+  await api('producer',{...report,expectedRevision:2,attemptId:'foreign'},403);
+  await api('producer',{...report,expectedRevision:2,state:'working'},403);
+  await api('producer',{...report,expectedRevision:2,state:'paused',appliedInputMessageIds:['test-welcome']},403);
+  await api('producer',{...report,expectedRevision:2,state:'paused',resultMessageId:'test-welcome'},403);
+  await api('producer',{action:'draft',runId:'restricted-stop',attemptId:'original',expectedRevision:2,sequence:1,body:'Must not stream'},403);
+  const paused=await api('producer',{...report,expectedRevision:2,state:'paused'});
+  assert.equal(paused.result.status,'paused');
+  assert.equal(paused.result.inputs[0].status,'pending');
+  await api('owner',{action:'resume',runId:'restricted-stop',expectedRevision:3},409);
 });

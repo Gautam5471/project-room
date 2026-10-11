@@ -68,7 +68,7 @@ export function createRoomApi({ origin, secret, signal }) {
       }
       return { ok: true, status: 200, value: { items, incompleteSources: incomplete } };
     },
-    async markUpdate(roomId, itemId, action, expectedBasis) {
+    async markUpdate(roomId, itemId, action, expectedBasis, requestId = randomUUID()) {
       if (typeof itemId !== "string" || !itemId) return { ok: false, skipped: true, reason: "update_id_required", value: null };
       // Old saved tasks cannot safely mark a revision they never observed.
       if (typeof expectedBasis !== "string" || !expectedBasis) {
@@ -77,7 +77,7 @@ export function createRoomApi({ origin, secret, signal }) {
       return call(origin, `/api/rooms/${encodeURIComponent(roomId)}/updates/${encodeURIComponent(itemId)}/${action}`, {
         ...auth,
         method: "POST",
-        body: { requestId: randomUUID(), expectedBasis },
+        body: { requestId, expectedBasis },
       });
     },
     async conversation(roomId, { messageId, limit } = {}) {
@@ -86,8 +86,8 @@ export function createRoomApi({ origin, secret, signal }) {
         : `limit=${limit ?? 40}`;
       return call(origin, `/api/rooms/${encodeURIComponent(roomId)}/conversation?${query}`, auth);
     },
-    async post(roomId, body, { replyToId = null, secrets = [] } = {}) {
-      const id = randomUUID();
+    async post(roomId, body, { replyToId = null, secrets = [], messageId = randomUUID() } = {}) {
+      const id = messageId;
       const clean = redact(body, secrets);
       const data = { messageId: id, body: clean };
       if (replyToId) data.replyToId = replyToId;

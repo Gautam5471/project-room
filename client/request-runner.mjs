@@ -97,7 +97,10 @@ export async function runRequestOnce({ connection, requestMessageId, db, execute
   try {
     controller.signal.throwIfAborted();
     const result = await execute({ requestId: id, request: structuredClone(context.request), messages,
-      preparation: context.preparation, signal: controller.signal });
+      preparation: context.preparation, signal: controller.signal }, { binding: Object.freeze({
+        origin: connection.origin, roomId: connection.roomId, memberId: connection.memberId,
+        requestMessageId, requestId: id, attemptId, roomCreatedEventId: context.roomCreatedEventId,
+        openingEventId: context.request.openingEventId, ...basis }) });
     controller.signal.throwIfAborted();
     const body = hostReplyBody(result);
     const response = { requestId: id, responseToRequestId: requestMessageId,

@@ -315,8 +315,9 @@ let actionEpoch = 0;
 let offerContextVersion = null;
 let currentThreadId = null, conversation = null, drafts = new ConversationDrafts();
 let requestRuns = {}, requestRunsReading = false, requestRunsReadKey = "";
+let assistantDraft = null;
 let requestMode = null, requestReading = false, requestEpoch = 0;
-const composerKey = () => requestMode ? replyDraftKey(requestMode, currentThreadId) : currentThreadId ?? channelDraftKey(activeChannelId);
+const composerKey = () => requestMode ? replyDraftKey(requestMode, currentThreadId) : assistantDraft ? `assistant:${assistantDraft.runId}` : currentThreadId ?? channelDraftKey(activeChannelId);
 const conversationViewKey = () => currentThreadId ? `thread:${currentThreadId}` : `room:${activeChannelId}`;
 // The room timeline renders only its newest TIMELINE_WINDOW root messages; the
 // "Show earlier messages" control adds another page. A room with thousands of
@@ -511,7 +512,7 @@ const client = new RoomClient({
       drafts = new ConversationDrafts();
       $("#message-input").value = "";
     }
-    requestRuns = {}; requestMode = null; requestReading = false; requestEpoch++; syncRequestComposer();
+    requestRuns = {}; assistantDraft = null; requestMode = null; requestReading = false; requestEpoch++; syncRequestComposer();
     renderComposerError();
     viewPositions.clear(); timelineWindow.clear(); pendingReactions.clear(); locallyOwnedMessageIds.clear(); newVisibleMessages = 0; briefView.reset();
     if (!pendingSignout) signoutOperationId += 1;
@@ -2164,11 +2165,11 @@ function activeChannel() { return state?.channels?.[activeChannelId] ?? null; }
 function setActiveChannel(id) {
   if (!state || busy || requestReading || composerFiles.some(file => file.status === "uploading")) return;
   const next = state.channels[id] && !state.channels[id].archivedAt ? id : DEFAULT_CHANNEL_ID;
-  if (next === activeChannelId && !currentThreadId && !requestMode) return;
+  if (next === activeChannelId && !currentThreadId && !requestMode && !assistantDraft) return;
   saveComposer();
   viewPositions.set(conversationViewKey(), $("#message-list").scrollTop);
   requestEpoch++; requestReading = false; requestMode = null;
-  currentThreadId = null;
+  currentThreadId = null; assistantDraft = null;
   activeChannelId = next;
   try { localStorage.setItem(channelStorageKey(), activeChannelId); } catch { /* private mode */ }
   restoreComposer(drafts.get(composerKey()));
@@ -2718,10 +2719,12 @@ function renderSearch(now = Date.now()) {
 }
 function saveComposer() {
   drafts.save(composerKey(), { body: $("#message-input").value, toMemberId: $("#message-to-select").value, replyToId, channelId: pendingMessage ? pendingMessage.command.data.channelId : activeChannelId, pending: pendingMessage, files: composerFiles,
-    ...(requestMode ? { mode: requestMode, threadId: currentThreadId } : {}) });
+    assistantDraft, ...(requestMode ? { mode: requestMode, threadId: currentThreadId } : {}) });
   persistDrafts();
 }
 function restoreComposer(draft) {
+  assistantDraft = draft.assistantDraft ?? null;
+  queueMicrotask(() => humanExperience.syncContribution());
   composerFiles = draft.files ?? []; renderComposerFiles();
   $("#message-input").value = draft.body;
   const select = $("#message-to-select");
@@ -2800,7 +2803,7 @@ function syncRequestComposer() {
   const archived = Boolean(state) && isRoomArchived(state); // Issue #6 A2: an archived room is read only.
   input.readOnly = Boolean(mode && pendingMessage);
   input.disabled = busy || requestReading || archived;
-  select.disabled = busy || requestReading || Boolean(mode && (mode.kind !== "request" || mode.followUpRequestId || pendingMessage));
+  select.disabled = busy || requestReading || Boolean(assistantDraft) || Boolean(mode && (mode.kind !== "request" || mode.followUpRequestId || pendingMessage));
   select.required = mode?.kind === "request";
   select.setCustomValidity(mode?.kind === "request" && (!select.value || select.value === session?.member.id) ? "Choose another participant." : "");
   renderComposerLength();
@@ -2812,7 +2815,7 @@ function syncRequestComposer() {
   syncComposerChrome();
 }
 function setRequestMode(mode, initial = {}) {
-  saveComposer(); requestMode = mode;
+  saveComposer(); assistantDraft = null; requestMode = mode;
   const key = composerKey();
   if (!drafts.entries.has(key)) drafts.save(key, { body: "", toMemberId: mode.requesterId ?? "", replyToId: mode.requestMessageId ?? currentThreadId, ...initial, pending: null, mode, threadId: currentThreadId });
   else drafts.save(key, { mode });
@@ -2929,9 +2932,9 @@ function switchThread(threadId, focusComposer = false) {
   if (!state || busy || composerFiles.some(file => file.status === "uploading") || (threadId && !conversation.threads.has(threadId))) return;
   const leavingResultQuestion = Boolean(requestMode?.resultEventId);
   requestEpoch++; requestReading = false;
-  if (threadId !== currentThreadId || requestMode) {
+  if (threadId !== currentThreadId || requestMode || assistantDraft) {
     saveComposer(); viewPositions.set(conversationViewKey(), $("#message-list").scrollTop);
-    currentThreadId = threadId; requestMode = null;
+    currentThreadId = threadId; requestMode = null; assistantDraft = null;
     restoreComposer(drafts.get(composerKey()));
     // "Also send to channel" is per-send, off by default in every thread.
     $("#also-send-to-channel").checked = false;
@@ -3834,7 +3837,25 @@ $("#join-agent-copy")?.addEventListener("click", async () => {
 // C1: mobile session menu (short header) - toggle, Escape, outside click.
 installRoomLayout();
 const humanExperience = installHumanExperience({ getState: () => state, getSession: () => session, client, notice,
-  openWork: id => revealWork(id), openMessage: id => revealMessage(id), selectResult: (id, messageId) => openWorkAction(state.workItems[id], "complete", messageId), refreshTranscript: () => { if (state) renderMessages(); } });
+  openWork: id => revealWork(id), openMessage: id => revealMessage(id),
+  getContribution: () => assistantDraft, endContribution: () => switchThread(currentThreadId),
+  startContribution: (sourceMessageId, intent) => {
+    const source = conversation?.byId.get(sourceMessageId);
+    if (!source || source.deletedAt || source.toMemberId || busy || requestReading || composerFiles.some(file => file.status === "uploading")) return false;
+    if (state.channels?.[messageChannelId(source)]?.archivedAt) return false;
+    // Both navigation helpers save the departing draft before restoring the destination.
+    setActiveChannel(messageChannelId(source));
+    switchThread(conversation.rootById.get(sourceMessageId), true);
+    // The ask owns a draft within the existing store. The destination thread's
+    // text, recipient and reply target stay intact, including a private draft.
+    saveComposer(); assistantDraft = { ...intent, sourceMessageId };
+    const key = composerKey();
+    if (!drafts.entries.has(key)) drafts.save(key, { body: "", toMemberId: "", replyToId: sourceMessageId, pending: null });
+    if (!drafts.get(key).pending) drafts.save(key, { assistantDraft });
+    restoreComposer(drafts.get(key));
+    updateReply(); syncRequestComposer(); saveComposer();
+    return true;
+  }, selectResult: (id, messageId) => openWorkAction(state.workItems[id], "complete", messageId), refreshTranscript: () => { if (state) renderMessages(); } });
 const sessionMenu = $("#session-menu");
 const sessionMenuButton = $("#session-menu-button");
 const setSessionMenuOpen = open => {
@@ -4016,6 +4037,10 @@ $("#message-form").addEventListener("submit", e => {
     $("#message-input").value = ""; pendingMessage = null; clearReply();
     $("#also-send-to-channel").checked = false;
     persistDrafts();
+    if (assistantDraft) {
+      assistantDraft = null; restoreComposer(drafts.get(composerKey()));
+      updateReply(); syncRequestComposer(); persistDrafts();
+    }
     await humanExperience.posted(data.messageId, askRoom);
     maybeShowGuestUpgradeHint();
   }, { failureHint: "Draft kept. Send again to retry." });
@@ -4237,8 +4262,9 @@ function updateReply() {
   mention.setAttribute("aria-pressed", addressing ? "true" : "false");
   setText("#reply-mention", author ? `Also @ ${author.displayName}` : "Also @");
 }
-function clearReply() { replyToId = currentThreadId; updateReply(); }
-$("#cancel-reply").addEventListener("click", () => { clearReply(); $("#message-input").focus({ preventScroll: true }); });
+function clearReply() { replyToId = assistantDraft?.sourceMessageId ?? currentThreadId; updateReply(); }
+function cancelReply() { if (assistantDraft) switchThread(currentThreadId); else clearReply(); }
+$("#cancel-reply").addEventListener("click", () => { cancelReply(); $("#message-input").focus({ preventScroll: true }); });
 $("#reply-mention").addEventListener("click", () => {
   const target = conversation?.byId.get(replyToId);
   const author = target ? replyAuthorToAddress(session?.member?.id, state.members[target.authorId]) : null;
@@ -4570,6 +4596,8 @@ $("#presence-list").addEventListener("click", e => {
   const row = e.target.closest(".presence-member");
   const member = state?.members[row?.dataset.memberRecordId];
   if (!member || member.active === false) return;
+  $("#main").classList.remove("sidebar-open");
+  $("#sidebar-toggle").setAttribute("aria-expanded", "false");
   applyMentionMember(member);
 });
 function chatEscapeState() {
@@ -4605,7 +4633,7 @@ function runEscapeChat(event) {
   event.preventDefault();
   if (action === "hide-emoji") hideEmoji();
   else if (action === "hide-mentions") hideMentions();
-  else if (action === "clear-reply") { clearReply(); saveComposer(); }
+  else if (action === "clear-reply") { cancelReply(); saveComposer(); }
   else if (action === "leave-thread") switchThread(null);
   return true;
 }
@@ -7511,7 +7539,13 @@ $("#topbar-catchup").addEventListener("click", () => { if (state && !busy) openC
 $("#sidebar-toggle").addEventListener("click", () => {
   const shell = $("#main"), open = shell.classList.toggle("sidebar-open");
   $("#sidebar-toggle").setAttribute("aria-expanded", String(open));
-  if (open) $("#room-sidebar .channel.is-active")?.focus();
+  if (!open) return;
+  // The drawer covers this button on a phone, so focus has to move into it.
+  // The single-conversation view hides the channel list, and focus() on a
+  // hidden node is a silent no-op, so fall back to the first visible control.
+  const sidebar = $("#room-sidebar"), shown = node => Boolean(node?.getClientRects().length);
+  const active = sidebar.querySelector(".channel.is-active");
+  (shown(active) ? active : [...sidebar.querySelectorAll("button:not([disabled]),summary,a[href]")].find(shown))?.focus();
 });
 document.addEventListener("click", event => {
   const shell = $("#main");
@@ -7521,7 +7555,9 @@ document.addEventListener("click", event => {
   // sidebar overlay: clicks inside it are dialog interactions, not "outside"
   // clicks. Dismissing the sidebar under them hides the dialog trigger while it
   // still holds restored focus, dropping focus to <body> on mobile.
-  if (event.target.closest("dialog")) return;
+  // The path is fixed at dispatch, so a dialog choice whose handler already
+  // re-rendered the menu (detaching the target) still counts as inside it.
+  if (event.target.closest("dialog") || event.composedPath().some(node => node.nodeName === "DIALOG")) return;
   shell.classList.remove("sidebar-open");
   $("#sidebar-toggle").setAttribute("aria-expanded", "false");
 });
