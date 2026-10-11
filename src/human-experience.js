@@ -130,7 +130,7 @@ export function installHumanExperience({ getState, getSession, client, notice, o
       }
     }
     if (current && faceStatus.dataset.faceStatus !== status.key) { faceStatus.dataset.faceStatus = status.key; faceStatus.textContent = status.text; }
-    const draft = current?.answerDraft?.attemptId === current?.attemptId && !CLOSED.includes(current?.status) ? current.answerDraft : null;
+    const draft = current && current.answerDraft && current.answerDraft.attemptId === current.attemptId && !CLOSED.includes(current?.status) ? current.answerDraft : null;
     const answer = draft?.body ?? '';
     // Keep one stable text node on the card; no per-token live announcements,
     // HTML execution, extra timeline messages or forced scrolling.

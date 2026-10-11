@@ -497,7 +497,7 @@ test('ask card shows not-picked-up and stalled statuses with the result on the c
   run = (await api('producer',{action:'publish',runId:run.id,attemptId:'host-3a',expectedRevision:run.revision,summary:'Plan ready.',body:'The plan is to ship the fence first.',appliedInputMessageIds:run.inputs.map(i=>i.sourceMessageId)})).result;
   assert.equal(run.status,'done');
   await page.waitForFunction(()=>document.querySelector('#assistant-runs').textContent.includes('The plan is to ship the fence first.'));
-  assert.equal(await page.locator('.assistant-run-result').count(),1);
+  assert.equal(await page.locator('#assistant-runs .assistant-run-result').count(),1);
   assert.deepEqual(errors,[]);
 });
 
