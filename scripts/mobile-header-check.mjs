@@ -176,7 +176,7 @@ async function exerciseHeader(page) {
 test("mobile header: session actions fold into an accessible menu, conversation stays close", { timeout: 90000 }, async t => {
   const { fixture, page, errors, server, context, origin } = await setup(t, { width: 390, height: 844 });
   await signIn(fixture, page, origin);
-  await page.waitForFunction(() => document.querySelector("#catchup-count").textContent === "10 updates");
+  await page.waitForFunction(() => document.querySelector("#catchup-count").textContent === "4 updates"); // R28-1: the owner's own setup events are not news to the owner
   await assertMoreLabel(page);
   const layouts = async (name, count, { interact = false, recovery = false } = {}) => {
     for (const width of [390, 320]) for (const font of [100, 200]) {
@@ -217,7 +217,7 @@ test("mobile header: session actions fold into an accessible menu, conversation 
       await page.screenshot({ path: `test-results/mobile-header-${width}-${font}-${name}.png` });
     }
   };
-  await layouts("10-updates", "10 updates");
+  await layouts("4-updates", "4 updates");
   await openCatchUp(page);
   await page.waitForFunction(() => !document.querySelector("#rb-ack-button").disabled && Boolean(document.querySelector("#rb-ack-button").dataset.horizon));
   await page.locator("#rb-ack-button").click();
@@ -226,9 +226,11 @@ test("mobile header: session actions fold into an accessible menu, conversation 
   await layouts("0-updates", "No new updates");
   let now = Date.now(); fixture.store.now = () => now;
   const send = (type, data, key = fixture.keys.owner) => { now += 2100; return fixture.store.command(key, "commons", { id: crypto.randomUUID(), type, data }); };
+  // The guest's mention comes first: an unbroken run of the owner's own events right
+  // after the marker is not news to the owner (R28-1), so this keeps all 77 counted.
+  send(T.MESSAGE_POSTED, { messageId: "header-mention", body: "@owner Please check this synthetic header update." }, fixture.keys.guest);
   for (let n = 0; n < 7; n++) send(T.WORK_PROPOSED, { workItemId: `header-work-${n}`, title: `Synthetic header task ${n + 1}`, definitionOfDone: "Exercise the visible current-needs count.", accountableMemberId: "owner", independentVerificationRequired: false, ownerDecisionRequired: false, mode: "read" });
   for (let n = 0; n < 69; n++) send(T.MESSAGE_POSTED, { messageId: `header-message-${n}`, body: `Synthetic header update ${n + 1}.` });
-  send(T.MESSAGE_POSTED, { messageId: "header-mention", body: "@owner Please check this synthetic header update." }, fixture.keys.guest);
   await page.waitForFunction(() => document.querySelector("#catchup-count").textContent === "7 need you · 77 updates");
   // Catch-up proposals are not actionable Updates. Load a real mention so
   // the compact-row contract also exercises the Updates badge, not an empty span.

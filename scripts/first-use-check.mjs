@@ -166,3 +166,46 @@ for (const touch of [false, true]) {
     assert.deepEqual(errors, []);
   });
 }
+
+// R28-1: a brand-new owner's top-bar chip must agree with Catch up. It used to
+// read "2 updates" in an empty room (the owner's own room setup) and grow with
+// every message the owner sent, while Catch up said "Already caught up".
+for (const touch of [false, true]) {
+  test(`first use ${touch ? 'touch' : 'desktop'}: your own room setup and messages are not updates to catch up on`, { timeout: 60000 }, async t => {
+    const directory = mkdtempSync(join(tmpdir(), 'room-first-use-chip-'));
+    const store = new RoomStore(join(directory, 'room.sqlite'));
+    store.initialize(initialRoom());
+    const ownerKey = store.issueAccessKey('commons', 'owner');
+    const server = createRoomServer({ store, streamInterval: 50 });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const browser = await chromium.launch({ headless: true });
+    t.after(async () => {
+      await browser?.close(); server.closeStreams(); server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve)); store.close();
+      rmSync(directory, { recursive: true, force: true });
+    });
+    const settings = { viewport: touch ? { width: 390, height: 844 } : { width: 1360, height: 900 }, hasTouch: touch, isMobile: touch, reducedMotion: 'reduce' };
+    const owner = await (await browser.newContext(settings)).newPage();
+    owner.setDefaultTimeout(10000);
+    const errors = []; owner.on('pageerror', e => errors.push(e.message));
+    await owner.goto(origin);
+    await signInFixture(owner, ownerKey);
+    await owner.locator('#main').waitFor({ state: 'visible' });
+    const chip = () => owner.locator('#catchup-count').textContent();
+    assert.equal(await chip(), 'No new updates', 'the room you just created has nothing new for you');
+    for (const body of ['First note to myself', 'Second note']) {
+      await owner.locator('#message-input').fill(body);
+      if (touch) await owner.getByRole('button', { name: 'Send', exact: true }).click();
+      else await owner.locator('#message-input').press('Enter');
+      await owner.locator('li.message', { hasText: body }).first().waitFor();
+    }
+    await owner.waitForTimeout(300); // let the post-send snapshot settle before reading the chip
+    assert.equal(await chip(), 'No new updates', 'messages you sent are not updates for you');
+    await clickChrome(owner, '#topbar-catchup');
+    await owner.locator('#catchup-dialog').waitFor({ state: 'visible' });
+    await owner.waitForFunction(() => /changes? since your marker/.test(document.querySelector('#summary-grid').textContent));
+    assert.match(await owner.locator('#summary-grid').textContent(), /^0 changes since your marker/, 'the chip and Catch up agree');
+    assert.deepEqual(errors, []);
+  });
+}

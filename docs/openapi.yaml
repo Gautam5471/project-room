@@ -13111,7 +13111,11 @@ paths:
       summary: Room snapshot
       description: >-
         Current projection for a member: `{ roomId, sequence, state, charter,
-        cursor, viewerId, ... }`. `?view=work` (the only view) returns the
+        cursor, catchUpCursor, viewerId, ... }`. `cursor` is the stored
+        caught-up marker that event resume starts from. `catchUpCursor` (full
+        view) is the read-only Catch up boundary: that marker moved past the
+        viewer's own unbroken run of events, the same boundary the return
+        brief uses. Reading it never writes a marker. `?view=work` (the only view) returns the
         work-focused snapshot (`snapshotView`, `snapshotVersion`). Header
         `x-project-room-help-context: 1` (with `view=work`) adds help
         context; `x-project-room-offer-context: 1` (full view only) adds
