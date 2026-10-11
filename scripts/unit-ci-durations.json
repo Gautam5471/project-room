@@ -832,6 +832,7 @@
   "tests/unit-shards.test.js": 24147,
   "tests/verify-affected.test.js": 2000,
   "tests/untested-modules-lint.test.js": 4521,
+  "tests/updates-agent-joined.test.js": 2500,
   "tests/updates-http.test.js": 68135,
   "tests/usage.test.js": 43483,
   "tests/user-guide-doc.test.js": 2553,
