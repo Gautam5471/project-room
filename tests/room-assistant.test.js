@@ -277,7 +277,7 @@ test('hosted MCP discovers scoped coordinator tools and executes the real public
   const catalog=await rpc('tools/list',{focus:'work'});
   assert.ok(catalog.result.tools.some(tool=>tool.name==='room_assistant_context'));
   const action=catalog.result.tools.find(tool=>tool.name==='room_assistant_action');
-  assert.deepEqual(action.inputSchema.properties.action.enum,['claim','report','publish']);
+  assert.deepEqual(action.inputSchema.properties.action.enum,['claim','report','publish','draft']);
   assert.equal(action.inputSchema.additionalProperties,false);
   assert.ok(action.inputSchema.allOf.length>0);
   const context=await call('room_assistant_context',{});
@@ -287,12 +287,16 @@ test('hosted MCP discovers scoped coordinator tools and executes the real public
   const claimed=await call('room_assistant_action',args);
   assert.equal(claimed.result.structuredContent.result.status,'working');
   assert.deepEqual((await call('room_assistant_action',args)).result.structuredContent,claimed.result.structuredContent);
+  const drafted=await call('room_assistant_action',{...args,action:'draft',requestId:'mcp-draft',expectedRevision:1,sequence:1,body:'A shared answer is forming.'});
+  assert.equal(drafted.result.structuredContent.result.answerDraft.body,'A shared answer is forming.');
+  assert.equal(drafted.result.structuredContent.result.revision,1);
   assert.ok((await call('room_assistant_action',{...args,action:'configure'})).error);
   assert.ok((await call('room_assistant_action',{...args,summary:'Cannot sneak report fields into claim'})).error);
   const posted=await call('room_post_message',{id:'shared-result-command',messageId:'mcp-result',body:'Combined shared answer.'});
   assert.notEqual(posted.result?.isError,true);
   const completed=await call('room_assistant_action',{action:'report',requestId:'mcp-complete',runId:'mcp-shared',attemptId:'saved-host-attempt',expectedRevision:1,state:'done',summary:'Shared answer ready.',resultMessageId:'mcp-result',appliedInputMessageIds:['test-welcome']});
   assert.equal(completed.result.structuredContent.result.status,'done');
+  assert.equal(completed.result.structuredContent.result.answerDraft,undefined);
   assert.equal((await api('guest')).runs[0].resultMessageId,'mcp-result');
   setTier(f.store.db,'commons',memberId,'t1_readonly',{updatedBy:'owner',nowMs:f.store.now()});
   const readonly=await rpc('tools/list',{focus:'work'});
