@@ -463,6 +463,34 @@ test('keyboard Stop on the card face keeps focus and the status change is announ
   await status.getByText('Stopped',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>document.activeElement===document.body),false,'focus survives the Stop button disappearing');
 });
+test('@Room in the mention list is an Ask Room, not a plain mention', { timeout: 45000 }, async t => {
+  const f = createAcceptanceFixture(), server = createRoomServer({ store: f.store, streamInterval: 40 });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); server.closeStreams(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); f.store.close(); rmSync(f.directory, { recursive: true, force: true }); });
+  const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  await page.goto(origin); await signInFixture(page, f.keys.owner);
+  await page.waitForFunction(() => document.body.classList.contains('human-experience'));
+  const input = page.locator('#message-input');
+  // Before the assistant is configured there is nothing called Room to mention.
+  await input.fill('@Roo');
+  const roomOptions = () => page.locator('#mention-list .mention-option').evaluateAll(n => n.map(o => o.textContent.trim()).filter(t => /^Room(?! owner)/.test(t)).length);
+  assert.equal(await roomOptions(), 0);
+  await input.fill('');
+  await page.locator('#assistant-setup').click(); await page.locator('#room-assistant-setup select').selectOption('producer');
+  await page.locator('#room-assistant-setup button[type=submit]').click(); await page.locator('#room-assistant-setup').waitFor({ state: 'hidden' });
+  await input.fill('can you help? @Roo');
+  await page.waitForFunction(() => [...document.querySelectorAll('#mention-list .mention-option')].some(o => /^Room(?! owner)/.test(o.textContent.trim())));
+  assert.equal(await page.locator('#ask-room').getAttribute('aria-pressed'), 'false');
+  await page.locator('#mention-list .mention-option').filter({ hasText: /^\s*Room(?! owner)/ }).first().click();
+  assert.equal(await page.locator('#ask-room').getAttribute('aria-pressed'), 'true', 'choosing @Room selects Ask Room');
+  assert.equal(await input.inputValue(), 'can you help?', 'the @ token is removed, not posted as plain text');
+  assert.equal(await page.locator('#mention-list').isHidden(), true);
+  // Sending now goes out as an invocation: a run exists for the message.
+  await page.locator('#message-form button[type=submit]').click();
+  await page.waitForFunction(() => document.querySelector('#assistant-runs').textContent.includes('can you help?'));
+});
+
 test('ask card shows not-picked-up and stalled statuses with the result on the card', { timeout: 60000 }, async t => {
   const f = createAcceptanceFixture(), server = createRoomServer({ store: f.store, streamInterval: 40 });
   await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
@@ -667,32 +695,4 @@ test('each ask renders as one foldable row; the row keeps its open state', { tim
   await page.waitForFunction(()=>document.querySelector('#assistant-runs').textContent.includes('Stopping'));
   assert.equal(await page.locator('#assistant-runs details.assistant-run[open]').count(),1,'summary controls do not toggle the fold');
   assert.deepEqual(errors,[]);
-});
-
-test('@Room in the mention list is an Ask Room, not a plain mention', { timeout: 45000 }, async t => {
-  const f = createAcceptanceFixture(), server = createRoomServer({ store: f.store, streamInterval: 40 });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); server.closeStreams(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); f.store.close(); rmSync(f.directory, { recursive: true, force: true }); });
-  const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
-  await page.goto(origin); await signInFixture(page, f.keys.owner);
-  await page.waitForFunction(() => document.body.classList.contains('human-experience'));
-  const input = page.locator('#message-input');
-  // Before the assistant is configured there is nothing called Room to mention.
-  await input.fill('@Roo');
-  const roomOptions = () => page.locator('#mention-list .mention-option').evaluateAll(n => n.map(o => o.textContent.trim()).filter(t => /^Room(?! owner)/.test(t)).length);
-  assert.equal(await roomOptions(), 0);
-  await input.fill('');
-  await page.locator('#assistant-setup').click(); await page.locator('#room-assistant-setup select').selectOption('producer');
-  await page.locator('#room-assistant-setup button[type=submit]').click(); await page.locator('#room-assistant-setup').waitFor({ state: 'hidden' });
-  await input.fill('can you help? @Roo');
-  await page.waitForFunction(() => [...document.querySelectorAll('#mention-list .mention-option')].some(o => /^Room(?! owner)/.test(o.textContent.trim())));
-  assert.equal(await page.locator('#ask-room').getAttribute('aria-pressed'), 'false');
-  await page.locator('#mention-list .mention-option').filter({ hasText: /^\s*Room(?! owner)/ }).first().click();
-  assert.equal(await page.locator('#ask-room').getAttribute('aria-pressed'), 'true', 'choosing @Room selects Ask Room');
-  assert.equal(await input.inputValue(), 'can you help?', 'the @ token is removed, not posted as plain text');
-  assert.equal(await page.locator('#mention-list').isHidden(), true);
-  // Sending now goes out as an invocation: a run exists for the message.
-  await page.locator('#message-form button[type=submit]').click();
-  await page.waitForFunction(() => document.querySelector('#assistant-runs').textContent.includes('can you help?'));
 });
