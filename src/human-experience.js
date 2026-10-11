@@ -98,6 +98,7 @@ export function installHumanExperience({ getState, getSession, client, notice, o
     $('#assistant-setup').textContent = assistant.availability === 'connected' ? uiText('human.assistantChange') : 'Connect';
     const runs = Object.values(projection.runs ?? {});
     $('#assistant-activity').hidden = !runs.length;
+    const openRuns = new Set([...document.querySelectorAll('#assistant-runs details.assistant-run[open]')].map(d => d.dataset.assistantRun));
     const runsHtml = runs.map(run => {
       const source = getState().messages.find(m => m.id === run.sourceMessageId);
       const sourceDeleted = run.sourceDeleted || Boolean(source?.deletedAt);
@@ -108,7 +109,30 @@ export function installHumanExperience({ getState, getSession, client, notice, o
       }).join('');
       const editable = !sourceDeleted && !['done','failed','cancelled','cancel_requested'].includes(run.status);
       const resultMessage = !sourceDeleted && run.status === 'done' && run.resultMessageId ? getState().messages.find(m => m.id === run.resultMessageId) : null;
-      return ["<article class=\"assistant-run\" data-assistant-run=\"", esc(run.id), "\" data-attempt-id=\"", esc(run.attemptId ?? ''), "\"><strong>", esc(sourceDeleted ? uiText('human.deletedRequest') : source?.body?.slice(0,160) || 'Shared request'), "</strong><p>", esc(({ queued: uiText("human.copy.010"), not_picked_up: uiText("human.askNotPickedUp"), working: 'Working', stalled: uiText("human.askStalled"), unknown: uiText('human.face.connectionInterrupted'), paused: 'Paused', resume_requested: uiText("human.copy.011"), pause_requested: uiText("human.copy.012"), cancel_requested: uiText("human.copy.013"), done: 'Result ready', failed: "Couldn't finish", needs_input: 'Needs input', cancelled: 'Cancelled' })[run.displayStatus ?? run.status] || run.status), "</p>", resultMessage?.body ? ["<p class=\"assistant-run-result\"><strong>", uiText("human.askResult"), "</strong> ", esc(resultMessage.body.slice(0,400)), "</p>"].join('') : '', sourceDeleted ? '' : ["<button type=\"button\" class=\"text-button\" data-assistant-message=\"", esc(run.sourceMessageId), "\">Original prompt</button>"].join(''), !sourceDeleted && run.resultMessageId ? `<button type="button" class="text-button" data-assistant-message="${esc(run.resultMessageId)}">Open result</button>` : '', "", (sourceDeleted ? [] : run.activity ?? []).slice(-5).map(a => `<p>${esc(a.summary)}</p>`).join(''), "", inputs, "", editable ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">Add context</button>"].join('') : '', "", editable && run.status !== 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-conflict=\"true\" data-revision=\"", run.revision, "\">Change direction</button>"].join('') : '', "", controls && !sourceDeleted && run.status === 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-resolve=\"true\" data-revision=\"", run.revision, "\">Resolve direction</button>"].join('') : '', "", controls && ['queued', 'working', 'unknown', 'not_picked_up', 'stalled'].includes(run.status) ? ["<button type=\"button\" class=\"text-button\" data-pause-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">Pause</button>"].join('') : controls && !sourceDeleted && run.status === 'paused' ? ["<button type=\"button\" class=\"text-button\" data-pause-run=\"", esc(run.id), "\" data-resume=\"true\" data-revision=\"", run.revision, "\">Resume</button>"].join('') : '', controls && !['done','failed','cancelled','cancel_requested'].includes(run.status) ? uiText("human.stopRequest", { runId: esc(run.id), revision: run.revision }) : '', "</article>"].join('');
+      const statusLabel = ({ queued: uiText("human.copy.010"), not_picked_up: uiText("human.askNotPickedUp"), working: 'Working', stalled: uiText("human.askStalled"), unknown: 'Connection interrupted', paused: 'Paused', resume_requested: uiText("human.copy.011"), pause_requested: uiText("human.copy.012"), cancel_requested: uiText("human.copy.013"), done: 'Result ready', failed: "Couldn't finish", needs_input: 'Needs input', cancelled: 'Cancelled' })[run.displayStatus ?? run.status] || run.status;
+      const promptLabel = sourceDeleted ? uiText('human.deletedRequest') : source?.body?.slice(0,160) || 'Shared request';
+      const pauseButton = controls && ['queued', 'working', 'unknown', 'not_picked_up', 'stalled'].includes(run.status) ? ["<button type=\"button\" class=\"text-button\" data-pause-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">Pause</button>"].join('') : controls && !sourceDeleted && run.status === 'paused' ? ["<button type=\"button\" class=\"text-button\" data-pause-run=\"", esc(run.id), "\" data-resume=\"true\" data-revision=\"", run.revision, "\">Resume</button>"].join('') : '';
+      const stopButton = controls && !['done','failed','cancelled','cancel_requested'].includes(run.status) ? uiText("human.stopRequest", { runId: esc(run.id), revision: run.revision }) : '';
+      // One foldable row per ask: the summary is the whole ask at a glance
+      // (prompt, status, result snippet, stop controls); the detail holds the
+      // full card. Open rows stay open across repaints.
+      return ["<details class=\"assistant-run\" data-assistant-run=\"", esc(run.id), "\" data-attempt-id=\"", esc(run.attemptId ?? ''), "\"", openRuns.has(run.id) ? " open" : "", ">",
+        "<summary><strong>", esc(promptLabel.slice(0, 90)), "</strong>",
+        "<span class=\"assistant-run-status\">", esc(statusLabel), "</span>",
+        resultMessage?.body ? ["<span class=\"assistant-run-resultline\">", esc(resultMessage.body.slice(0, 120)), "</span>"].join('') : '',
+        // Original prompt and Open result stay reachable while the row is folded.
+        sourceDeleted ? '' : ["<button type=\"button\" class=\"text-button\" data-assistant-message=\"", esc(run.sourceMessageId), "\">Original prompt</button>"].join(''),
+        !sourceDeleted && run.resultMessageId ? `<button type="button" class="text-button" data-assistant-message="${esc(run.resultMessageId)}">Open result</button>` : '',
+        pauseButton, stopButton, "</summary>",
+        "<div class=\"assistant-run-detail\">",
+        "<p>", esc(statusLabel), "</p>",
+        resultMessage?.body ? ["<p class=\"assistant-run-result\"><strong>", uiText("human.askResult"), "</strong> ", esc(resultMessage.body.slice(0,400)), "</p>"].join('') : '',
+        (sourceDeleted ? [] : run.activity ?? []).slice(-5).map(a => `<p>${esc(a.summary)}</p>`).join(''),
+        inputs,
+        editable ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">Add context</button>"].join('') : '',
+        editable && run.status !== 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-conflict=\"true\" data-revision=\"", run.revision, "\">Change direction</button>"].join('') : '',
+        controls && !sourceDeleted && run.status === 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-resolve=\"true\" data-revision=\"", run.revision, "\">Resolve direction</button>"].join('') : '',
+        "</div></details>"].join('');
     }).join('');
     const current = faceRun(Object.values(projection.runs ?? {}).filter(run => !getState().messages.find(m => m.id === run.sourceMessageId)?.deletedAt)), status = askFaceStatus(current);
     const faceSource = current && getState().messages.find(m => m.id === current.sourceMessageId);
@@ -186,6 +210,8 @@ export function installHumanExperience({ getState, getSession, client, notice, o
     } catch (failure) { if (stamp === key()) { error = failure.message; paint(); } }
   };
   $('#assistant-runs').onclick = async event => {
+    // Controls in a run's summary row must not toggle the fold.
+    if (event.target.closest('summary button')) event.preventDefault();
     const message = event.target.closest('[data-assistant-message]'); if (message) { openMessage(message.dataset.assistantMessage); return; }
     const context = event.target.closest('[data-contribute-run]');
     if (context) {

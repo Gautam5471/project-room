@@ -17,7 +17,14 @@
 #assistant-runs { max-height: 25vh; overflow: auto; }
 .assistant-run { padding: .5rem 0; }
 .assistant-run + .assistant-run { border-top: 1px solid var(--border); }
-.assistant-run p { margin: .3rem 0; }
+.assistant-run summary { display: flex; align-items: baseline; gap: .6rem; cursor: pointer; overflow: hidden; }
+.assistant-run summary > strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assistant-run-status { flex: 0 0 auto; color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
+.assistant-run-resultline { flex: 2 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); }
+.assistant-run summary .text-button { flex: 0 0 auto; margin: 0 0 0 .2rem; white-space: nowrap; }
+.assistant-run-detail { padding: .2rem 0 .2rem 1.1rem; }
+.assistant-run-detail p { margin: .3rem 0; }
+.assistant-run-detail > .text-button { margin-right: .6rem; margin-block: .2rem; }
 .assistant-run-result { border-left: 2px solid var(--border); padding-left: .6rem; color: var(--text); }
 .assistant-run-result strong { margin-right: .4rem; }
 #ask-room[aria-pressed="true"] { outline: 2px solid var(--blue); }

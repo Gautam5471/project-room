@@ -211,7 +211,7 @@ test('two humans share public assistant prompts, constraints, confirmed activity
   await owner.locator('#assistant-retry').waitFor({state:'visible'});
   recovery = (await api('producer')).runs.find(r => r.id === recovery.id);
   assert.equal(recovery.status, 'cancel_requested');
-  await ownerRun.getByText('Stopping · waiting for confirmation', {exact:true}).waitFor();
+  await ownerRun.locator('.assistant-run-status').getByText('Stopping · waiting for confirmation', {exact:true}).waitFor();
   assert.equal(await ownerRun.getByRole('button', {name:'Add context', exact:true}).count(), 0);
   assert.equal(await ownerRun.getByRole('button', {name:'Stop', exact:true}).count(), 0);
   await owner.locator('#assistant-retry').click();
@@ -405,19 +405,19 @@ test('deleted assistant prompt shows only content-free stop controls and preserv
   await page.route('**/api/rooms/commons/assistant',route=>route.request().method()==='GET'?route.abort():route.continue());
   const deletion=await fetch(`${origin}/api/rooms/commons/commands`,{method:'POST',headers:{authorization:`Bearer ${f.keys.owner}`,'content-type':'application/json'},body:JSON.stringify({id:crypto.randomUUID(),type:'message.deleted',data:{messageId:'erase-browser-prompt',expectedMessageRevision:0}})});
   assert.equal(deletion.status,201,await deletion.text());
-  await panel.getByText('Deleted request',{exact:true}).waitFor({timeout:5000});
+  await panel.locator('summary strong').getByText('Deleted request',{exact:true}).waitFor({timeout:5000});
   assert.doesNotMatch(await panel.textContent(),/ERASED-BROWSER-PROMPT/);
   await page.unroute('**/api/rooms/commons/assistant');
   for(const name of ['Original prompt','Add context','Change direction','Resolve direction','Resume']) assert.equal(await panel.getByRole('button',{name,exact:true}).count(),0);
   await panel.getByRole('button',{name:'Pause',exact:true}).click();
-  await panel.getByText('Pausing · waiting for confirmation',{exact:true}).waitFor();
+  await panel.locator('.assistant-run-status').getByText('Pausing · waiting for confirmation',{exact:true}).waitFor();
   await api('producer',{action:'report',runId:'deleted-browser-run',attemptId:'browser-host',expectedRevision:3,state:'paused',summary:'Stopped'});
-  await panel.getByText('Paused',{exact:true}).waitFor();
+  await panel.locator('.assistant-run-status').getByText('Paused',{exact:true}).waitFor();
   assert.equal(await panel.getByRole('button',{name:'Resume',exact:true}).count(),0);
   await panel.getByRole('button',{name:'Stop',exact:true}).click();
-  await panel.getByText('Stopping · waiting for confirmation',{exact:true}).waitFor();
+  await panel.locator('.assistant-run-status').getByText('Stopping · waiting for confirmation',{exact:true}).waitFor();
   await api('producer',{action:'report',runId:'deleted-browser-run',attemptId:'browser-host',expectedRevision:5,state:'cancelled',summary:'Cancelled'});
-  await panel.getByText('Cancelled',{exact:true}).waitFor();
+  await panel.locator('.assistant-run-status').getByText('Cancelled',{exact:true}).waitFor();
   assert.equal(await panel.getByRole('button').count(),0);
   assert.equal(await page.locator('#message-input').inputValue(),'Keep my unsent conversation draft.');
 });
@@ -624,4 +624,47 @@ for (const width of [1280, 390]) test(`one shared answer streams in place and be
   assert.equal(await node.evaluate(n=>n===document.querySelector('#assistant-answer')),true);
   assert.equal(f.store.room('commons').state.messages.filter(m=>m.body==='The final shared answer.').length,1);
   assert.equal(await page.locator('#assistant-activity').evaluate(n=>n.open),false);
+});
+test('each ask renders as one foldable row; the row keeps its open state', { timeout: 60000 }, async t => {
+  const f = createAcceptanceFixture(), server = createRoomServer({ store: f.store, streamInterval: 40 });
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({headless:true});
+  t.after(async () => { await browser.close(); server.closeStreams(); server.closeAllConnections(); await new Promise(resolve=>server.close(resolve)); f.store.close(); rmSync(f.directory,{recursive:true,force:true}); });
+  const errors = [];
+  const context = await browser.newContext({viewport:{width:1280,height:900}}), page = await context.newPage();
+  page.on('pageerror', e=>errors.push(e.message)); await page.goto(origin); await signInFixture(page,f.keys.owner);
+  await page.locator('#main').waitFor({state:'visible'}); await page.waitForFunction(()=>document.body.classList.contains('human-experience'));
+  const api = async (actor, input) => {
+    const response = await fetch(`${origin}/api/rooms/commons/assistant`, {method:input?'POST':'GET',headers:{Authorization:`Bearer ${f.keys[actor]}`,...(input?{'Content-Type':'application/json'}:{})},...(input?{body:JSON.stringify({requestId:crypto.randomUUID(),...input})}:{})});
+    const json=await response.json(); assert.ok(response.ok,JSON.stringify(json));return json;
+  };
+  await page.locator('#assistant-setup').click(); await page.locator('#room-assistant-setup select').selectOption('producer');
+  await page.locator('#room-assistant-setup button[type=submit]').click(); await page.locator('#room-assistant-setup').waitFor({state:'hidden'});
+  const send = async body => { await page.locator('#ask-room').click(); await page.locator('#message-input').fill(body); await page.locator('#message-form button[type=submit]').click(); await page.waitForFunction(()=>document.querySelector('#message-input').value===''); };
+  await send('First question for the room?');
+  await send('Second question for the room?');
+  await page.waitForFunction(()=>document.querySelectorAll('#assistant-runs details.assistant-run').length===2);
+  await page.locator('#assistant-activity').evaluate(n=>{n.open=true;});
+  // One line per ask: the summary carries the prompt and the status.
+  const summaries = await page.locator('#assistant-runs details.assistant-run > summary').allTextContents();
+  assert.equal(summaries.length,2);
+  assert.ok(summaries.some(s => s.includes('First question for the room?') && s.includes('Waiting for assistant')));
+  assert.ok(summaries.some(s => s.includes('Second question for the room?') && s.includes('Waiting for assistant')));
+  // Rows start folded; the full card is one click away.
+  assert.equal(await page.locator('#assistant-runs details.assistant-run[open]').count(),0);
+  await page.locator('#assistant-runs details.assistant-run > summary').first().click();
+  await page.waitForFunction(()=>document.querySelector('#assistant-runs details.assistant-run[open]')!==null);
+  await page.locator('#assistant-runs details.assistant-run[open]').getByRole('button',{name:'Original prompt',exact:true}).waitFor();
+  // Original prompt is reachable on a folded row too (it lives in the summary).
+  await page.locator('#assistant-runs details.assistant-run:not([open]) > summary').getByRole('button',{name:'Original prompt',exact:true}).waitFor();
+  // The open row survives a repaint triggered by new run activity.
+  let run = (await api('producer')).runs[0];
+  await api('producer',{action:'claim',runId:run.id,attemptId:'fold-host',expectedRevision:run.revision});
+  await page.waitForFunction(()=>document.querySelector('#assistant-runs').textContent.includes('Working'));
+  assert.equal(await page.locator('#assistant-runs details.assistant-run[open]').count(),1,'the open row stays open across repaints');
+  // Using the summary Stop does not collapse the row.
+  await page.evaluate(()=>{ document.querySelector('#assistant-runs details.assistant-run[open] summary [data-cancel]').click(); });
+  await page.waitForFunction(()=>document.querySelector('#assistant-runs').textContent.includes('Stopping'));
+  assert.equal(await page.locator('#assistant-runs details.assistant-run[open]').count(),1,'summary controls do not toggle the fold');
+  assert.deepEqual(errors,[]);
 });
