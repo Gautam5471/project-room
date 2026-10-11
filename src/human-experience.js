@@ -274,6 +274,11 @@ export function installHumanExperience({ getState, getSession, client, notice, o
   };
   setInterval(() => { void refresh(); }, 500);
   return {
+    // Ask Room from the @ list: same state the Ask Room button toggles on.
+    selectAsk() {
+      if (!human() || document.body.classList.contains('human-advanced') || !projection?.assistant.coordinatorMemberId) return false;
+      selected = true; ask.setAttribute('aria-pressed', 'true'); return true;
+    },
     assistantName(id) { return human() && !document.body.classList.contains('human-advanced') && projection?.assistant.coordinatorMemberId === id ? projection.assistant.name : null; },
     sync() {
       const active = human() && Boolean(getState()); document.body.classList.toggle('human-experience', active);
