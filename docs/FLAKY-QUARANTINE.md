@@ -16,14 +16,21 @@ A flaky test — one that fails non-deterministically while the product is fine 
    }
    ```
    `reason` is the failure signature, not a vibe — enough that a stranger can reproduce the flake. `repair_by` is at most 14 days after `quarantined_at`. `owner` is a lane or handle; it may be filled in by the repair lane within the 14-day window if unknown at quarantine time.
-3. **While quarantined, the test runs in the non-blocking lane.** Options, in preference order:
-   - a dedicated workflow job (e.g. `zero-bug-quarantine.yml` extended with a `quarantined-tests` job) that executes the quarantined list and `continue-on-error: true` — results report, PRs never fail on it;
-   - or a separate npm script (`npm run test:quarantined`) wired to that job, reading the same `tests/quarantine.json` so the list never drifts.
+3. **While quarantined, the test runs in the non-blocking lane.** Quarantined tests are executed by `scripts/run-quarantined-tests.mjs` (`npm run test:quarantined`), which reads `tests/quarantine.json`. Entries identify tests either by file plus test name (`"file > test name"`) or by a bare file. The runner executes each test with `QUARANTINE_RUN=1`. A failing test produces a non-zero exit status from the local runner.
+
+   In CI, `.github/workflows/zero-bug-quarantine.yml` defines two jobs:
+   - **`quarantine-check`**: validates the quarantine registry on pull requests and pushes to `main`.
+   - **`quarantined-tests`**: executes the quarantined tests on pushes to `main`. The job sets `continue-on-error: true`, making the CI execution lane non-blocking so test failures report honestly without failing the pipeline.
+
+   Quarantined tests can be run locally using:
+   ```sh
+   bash scripts/test-env.sh npm run test:quarantined
+   ```
 4. **Repair or re-admit within 14 days.** The owner fixes the root cause (not the assertion — the race, the clock dependency, the shared fixture) and the test re-enters the blocking suite with its entry deleted. A genuinely unfixable test is re-admitted only as a deleted test: remove the entry and delete or permanently disable the test with the reason recorded in the PR, never as an indefinite quarantine.
 
 ## The enforcement
 
-`scripts/quarantine-check.mjs` runs in CI on every PR and every push to `main`. It exits non-zero when any entry violates the contract:
+The `quarantine-check` job runs `scripts/quarantine-check.mjs` in CI on every PR and every push to `main`. It exits non-zero when any entry violates the contract:
 
 - **past `repair_by`** — the 14 days are up, the test is not fixed, and nobody re-admitted or deleted it;
 - **`quarantined_at` older than 14 days with no `owner`** — an ownerless flake quietly becoming permanent;
