@@ -118,7 +118,8 @@ const bindingPattern = /^[a-f0-9]{64}$/;
 const assetType = path => path.endsWith(".js") || path.endsWith(".mjs") ? "text/javascript" : path.endsWith(".css") ? "text/css"
   : path.endsWith(".html") ? "text/html" : path.endsWith(".svg") ? "image/svg+xml"
   : path.endsWith(".png") ? "image/png" : path.endsWith(".ttf") ? "font/ttf" : path.endsWith(".txt") ? "text/plain"
-  : path.endsWith(".webmanifest") ? "application/manifest+json" : "text/markdown; charset=utf-8";
+  : path.endsWith(".webmanifest") ? "application/manifest+json" : path.endsWith(".json") ? "application/json" : path.endsWith(".sh") ? "text/plain"
+  : "text/markdown; charset=utf-8";
 const assets = new Map([
   ["/", ["index.html", "text/html"]],
   ["/offers", ["offers.html", "text/html"]],
