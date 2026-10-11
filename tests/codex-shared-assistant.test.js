@@ -85,3 +85,23 @@ test("restart reconciles a completed timed-out shared turn and publishes once", 
   assert.equal((await f.run()).result.status, "done");
   assert.equal(f.calls.filter(x => x.method === "turn/start").length, 1);
 });
+test("restart settles Stop received while the runtime was disconnected", async t => {
+  let complete;
+  const f = await setup(t, async ({ finish }) => { complete = finish; });
+  await assert.rejects(f.run({ timeoutMs: 30 }), /uncertain/);
+  complete("completed");
+  const current = (await f.api("owner")).runs[0];
+  await f.api("owner", { action: "cancel", runId: "shared", expectedRevision: current.revision });
+  assert.equal((await f.run()).result.status, "cancelled");
+  assert.equal(f.calls.filter(x => x.method === "turn/start").length, 1);
+});
+test("stale heartbeat state permits completed recovery but never starts a new turn", async t => {
+  let complete;
+  const f = await setup(t, async ({ finish }) => { complete = finish; });
+  await assert.rejects(f.run({ timeoutMs: 30 }), /uncertain/);
+  complete("completed");
+  const now = f.f.store.now(); f.f.store.now = () => now + 180000;
+  assert.equal((await f.api("owner")).runs[0].status, "unknown");
+  assert.equal((await f.run()).result.status, "done");
+  assert.equal(f.calls.filter(x => x.method === "turn/start").length, 1);
+});

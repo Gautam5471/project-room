@@ -39,7 +39,8 @@ export async function runCodexSharedAssistant({ connection, db, rpc, cwd, policy
   if (record.publish) return act(JSON.parse(record.publish)); // Exact atomic publication retry; no model rerun.
   if (run.attemptId && run.attemptId !== attemptId) throw new Error("Another host owns this shared attempt");
   if (!run.attemptId) run = (await act({ action: "claim", requestId: `codex-claim-${key}`, expectedRevision: run.revision })).result;
-  if (run.status !== "working") throw new Error("Shared attempt is not working");
+  if (run.status !== "working" && !(record.inputs && ["unknown", ...stops].includes(run.status)))
+    throw new Error("Shared attempt is not working");
   const binding = { kind: "shared-assistant", origin: connection.origin, roomId: connection.roomId, memberId: connection.memberId,
     runId, attemptId, roomCreatedAt, runCreatedAt: String(run.createdAt) };
   const runtime = createCodexRuntimeHost({ db, rpc, cwd, policy, emit, timeoutMs, scope: connection,
@@ -80,7 +81,11 @@ export async function runCodexSharedAssistant({ connection, db, rpc, cwd, policy
   let result;
   try {
     if (recovering) {
-      const recovered = await runtime.reconcile(binding);
+      let recovered = await runtime.reconcile(binding);
+      if (stops.has(run.status) && !["completed", "interrupted", "failed"].includes(recovered.status)) {
+        await runtime.interrupt(binding);
+        recovered = await runtime.reconcile(binding);
+      }
       if (recovered.status !== "completed") throw new Error("Shared runtime recovery required; original turn is not completed");
       result = { body: recovered.body };
     } else result = await runtime({ run: { id: runId, sourceMessageId: run.sourceMessageId }, inputs: selected, signal: controller.signal }, { binding });
@@ -99,7 +104,7 @@ export async function runCodexSharedAssistant({ connection, db, rpc, cwd, policy
   if (current.attemptId === attemptId && stops.has(current.status))
     return act({ action: "report", requestId: `codex-stop-${key}`, expectedRevision: current.revision,
       state: current.status === "cancel_requested" ? "cancelled" : "paused", summary: "Execution stopped." });
-  if (current.attemptId !== attemptId || current.status !== "working" || current.sourceDeleted)
+  if (current.attemptId !== attemptId || !["working", "unknown"].includes(current.status) || current.sourceDeleted)
     throw new Error("Shared result is withheld: attempt stopped or changed");
   if (basis !== digest(await inputs(current))) throw new Error("Shared inputs changed; reconcile result before publishing");
   const publish = { action: "publish", requestId: `codex-publish-${key}`, expectedRevision: current.revision,
