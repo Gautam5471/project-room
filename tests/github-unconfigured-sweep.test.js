@@ -92,3 +92,20 @@ test("a successful GitHub read is fresh and a real mismatch shows", async t => {
   assert.equal(status.main, SHA_OLD);
   assert.equal(chipFor({ ...status, live: SHA_LIVE }), "Live differs from main");
 });
+
+// Readers inside the 60 s window after a failed read share that read's result,
+// so they must not get the pre-deploy cached main back as fresh.
+for (const name of ["403", "thrown fetch", "5xx"]) {
+  test(`a second reader right after a failed GitHub read (${name}) still sees stale`, async t => {
+    const store = new RoomStore(":memory:");
+    t.after(() => store.close?.());
+    store.db.prepare("INSERT INTO work_claim_config(room_id, config_json, updated_at) VALUES(?,?,?)")
+      .run("_claim-main-head", JSON.stringify({ sha: SHA_OLD, behind: null, checkedAt: "2026-10-11T00:00:00.000Z" }), 1);
+    const nowMs = 1_750_000_000_000;
+    await readBoardDeployStatus(store, { fetchImpl: failedReads[name], token: null, nowMs, force: true });
+    const second = await readBoardDeployStatus(store, { fetchImpl: failedReads[name], token: null, nowMs: nowMs + 5_000 });
+    assert.equal(second.main, SHA_OLD);
+    assert.equal(second.stale, true, "the window reuses the failed read, so the cache is still stale");
+    assert.equal(chipFor({ ...second, live: SHA_LIVE }), "Deploy status unknown");
+  });
+}
