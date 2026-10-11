@@ -179,6 +179,8 @@ export default {
   "human.askNotPickedUp": "Not picked up — the assistant hasn't claimed this yet",
   "human.askStalled": "Stalled — no update from the assistant in a while",
   "human.askResult": "Result",
+  "human.addToThisAsk": "Add to this ask",
+  "human.addingToAsk": "Adding to {name}'s ask",
   "error.access_rejected": "That request was rejected. If you expected access, ask the room owner to review it.",
   "error.account_exists": "An account already exists here. Sign in instead of creating a new one.",
   "error.account_not_found": "We couldn't find that account. Sign in again, or check the account details.",
@@ -371,7 +373,6 @@ export default {
   "human.face.stopped": "Stopped",
   "human.face.sharedRequest": "Shared request",
   "human.face.openResult": "Open result",
-  "human.face.addContext": "Add context",
   "human.assistantChange": "Change",
   "deletion.plain.shared": "Messages and work history already shared in those rooms will remain."
 };
