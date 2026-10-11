@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { agentConnectionFromEnvironment } from "../client/agent-connection.mjs";
@@ -57,6 +57,6 @@ Normal invocation executes one already-created public Room assistant run assigne
     }
   } finally { await rpc?.close(); db?.close(); process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main().catch(error => {
   console.error(error.message); process.exitCode = 1;
 });

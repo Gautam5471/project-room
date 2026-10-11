@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, chmodSync, mkdirSync, rmSync, symlinkSync, realpathSync, existsSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createAcceptanceFixture } from "../scripts/acceptance-fixture.mjs";
 import { createRoomServer } from "../server/http.mjs";
 import { createRoomClient } from "../scripts/room-assistant-scratch.mjs";
@@ -101,4 +101,17 @@ test("closing kills a TERM-resistant descendant even after the app-server parent
   await rpc.close();
   assert.throws(() => process.kill(childPid, 0), { code: "ESRCH" });
   assert.equal(existsSync(join(config.codexHome, ".room-runtime.lock")), false);
+});
+
+
+test("activation CLI runs through a symlink entrypoint", t => {
+  const { root } = setup(t);
+  const alias = join(root, "room-host.mjs");
+  symlinkSync(realpathSync("scripts/run-codex-room.mjs"), alias);
+  const result = spawnSync(process.execPath, [alias, "--help"], {
+    cwd: root, env: { PATH: "/unavailable" }, encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /RUN_ID/);
+  assert.match(result.stdout, /--check/);
 });
