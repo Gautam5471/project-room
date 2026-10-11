@@ -24,4 +24,3 @@ export function createRoomClient({ origin, roomId, token, fetchImpl = fetch }) {
     post: (messageId, body, extra = {}) => call("POST", "/commands", { id: stable("cmd", messageId), type: "message.posted", data: { messageId, body, ...extra } })
   };
 }
-

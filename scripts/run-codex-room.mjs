@@ -11,9 +11,9 @@ import { runCodexSharedAssistant } from "../client/codex-shared-assistant.mjs";
 export async function main(argv = process.argv.slice(2)) {
   if (argv[0] === "--help") {
     console.log(`Usage:
-  ROOM_AGENT_CONFIG=/absolute/room-connection node scripts/run-codex-room.mjs --list
+  ROOM_AGENT_CONFIG="/path/room.json" node scripts/run-codex-room.mjs --list
   node scripts/run-codex-room.mjs --check /absolute/runtime.json
-  ROOM_AGENT_CONFIG=/absolute/room-connection node scripts/run-codex-room.mjs RUN_ID /absolute/journal.sqlite /absolute/runtime.json
+  ROOM_AGENT_CONFIG="/path/room.json" node scripts/run-codex-room.mjs RUN_ID /absolute/journal.sqlite /absolute/runtime.json
 
 Runtime JSON requires command (absolute Codex executable), cwd (real workspace), codexHome (dedicated private directory outside workspace and operator Codex home), policy {approvalPolicy:"never",sandbox:"read-only"|"workspace-write"}; optional model, requestTimeoutMs, turnTimeoutMs.
 Authenticate the dedicated Codex home explicitly using Codex login with CODEX_HOME set to that directory and cli_auth_credentials_store="file". No operator credentials or sessions are imported.
