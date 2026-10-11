@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { listedMcpTools } from "../server/mcp-discovery.mjs";
 import { MCP_TOOL_CONTRACTS, mcpToolContractLine, withMcpToolContract } from "../server/mcp-tool-contracts.mjs";
 import { CORE_REST_TWINS, CORE_REST_EXEMPT } from "./mcp-core-rest-parity.test.js";
+import { GUEST_WRITABLE_TOOLS, T1_WRITABLE_TOOLS } from "../server/capability-visibility.mjs";
 
 export const KNOWN_UNCOVERED = Object.freeze(new Set([
   "bond_accept", "bond_decline", "bond_list", "bond_revoke", "bounty_accept", "bounty_claim", "bounty_dispute",
@@ -91,4 +92,21 @@ test("no stale contracts and the line is added once", () => {
   const once = withMcpToolContract("room_react", withMcpToolContract("room_react", "Set a reaction."));
   assert.equal(once.split("Access:").length, 2);
   assert.equal(withMcpToolContract("not_a_tool", "x"), "x");
+});
+
+
+// The access words must match the catalog predicate in
+// server/capability-visibility.mjs: a write tool outside GUEST_WRITABLE_TOOLS is
+// hidden from guest-only agents, and one outside T1_WRITABLE_TOOLS from
+// read-only-tier agents, so its contract has to say so.
+test("contract access words agree with the guest and read-only-tier write sets", () => {
+  const writes = new Map(listedMcpTools("full").map(tool => [tool.name, tool.annotations?.readOnlyHint === false]));
+  const wrong = [];
+  for (const [name, contract] of Object.entries(MCP_TOOL_CONTRACTS)) {
+    if (!writes.get(name) || contract.access.startsWith("same as")) continue;
+    if (!GUEST_WRITABLE_TOOLS.has(name) && !/hidden from guest/.test(contract.access)) wrong.push(`${name}: guests`);
+    if (GUEST_WRITABLE_TOOLS.has(name) && !/guests allowed/.test(contract.access)) wrong.push(`${name}: guests allowed`);
+    if (!T1_WRITABLE_TOOLS.has(name) && !/read-only-tier/.test(contract.access)) wrong.push(`${name}: read-only tier`);
+  }
+  assert.deepEqual(wrong, []);
 });
