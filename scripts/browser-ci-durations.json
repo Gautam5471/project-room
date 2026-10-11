@@ -43,6 +43,7 @@
     "scripts/credit-question-browser-check.mjs": 5316,
     "scripts/decision-register-browser-check.mjs": 2407,
     "scripts/deleted-message-browser-check.mjs": 1749,
+    "scripts/message-edit-delete-browser-check.mjs": 3000,
     "scripts/design-cohesion-browser-check.mjs": 8357,
     "scripts/desktop-google-browser-check.mjs": 5216,
     "scripts/disclosure-check.mjs": 3017,
