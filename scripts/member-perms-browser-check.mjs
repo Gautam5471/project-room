@@ -112,6 +112,8 @@ for (const width of [390, 1280]) test(`a basic member requests by keyboard at ${
   const page = await f.login("requester");
   await openMemberProfile(page, "requester");
   assert.equal(await ownRow(page).getByRole("button", { name: "Ask to take work", exact: true }).count(), 1);
+  assert.equal((await ownRow(page).locator("[data-permission-request-status]").textContent()).trim(),
+    "Ask for: Accept work, Complete work. A room owner or admin reviews the request.", "members see permission names, not ids");
   assert.equal(await ownRow(page, "other").getByRole("button", { name: "Ask to take work", exact: true }).count(), 0,
     "a member cannot file a request as somebody else");
   const request = await ask(page, "requester", { keyboard: true });

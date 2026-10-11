@@ -294,6 +294,8 @@ export function createNeedsAttentionCard(options) {
 
 // MEMBER-PERMS: the requester uses the same authenticated, reviewed API as REST.
 const WORK_PERMISSIONS = ["accept_work", "complete_work"];
+// Members read these words, not the permission ids the server stores.
+const WORK_PERMISSION_LABELS = { accept_work: "Accept work", complete_work: "Complete work" };
 
 export function installMemberPermissions({ client, getState, getSession }) {
   let scope = null, operation = null, busy = false, message = "", retry = false;
@@ -330,7 +332,7 @@ export function installMemberPermissions({ client, getState, getSession }) {
     const button = group.querySelector("button"), status = group.querySelector("[role=status]");
     button.hidden = !missing.length; button.disabled = busy;
     button.textContent = busy ? "Sending request…" : retry ? "Retry request" : operation?.status === "pending" ? "Check request" : "Ask to take work";
-    status.textContent = !missing.length ? "You can take work now." : message || `Ask for: ${missing.join(", ")}. A room owner or admin reviews the request.`;
+    status.textContent = !missing.length ? "You can take work now." : message || `Ask for: ${missing.map(permission => WORK_PERMISSION_LABELS[permission] ?? permission).join(", ")}. A room owner or admin reviews the request.`;
   }
   async function request() {
     const value = current();
