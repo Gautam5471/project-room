@@ -26,7 +26,7 @@ function unit(t, { staleAfterMs = HEARTBEAT_STALE_AFTER_MS } = {}) {
   const db = new DatabaseSync(":memory:");
   db.exec(agentHeartbeatSchema);
   let at = T0;
-  const hb = new AgentHeartbeats({ db, now: () => at }, { staleAfterMs });
+  const hb = new AgentHeartbeats({ db, now: () => at, transaction: fn => { db.exec("BEGIN IMMEDIATE"); try { const result = fn(); db.exec("COMMIT"); return result; } catch (error) { db.exec("ROLLBACK"); throw error; } } }, { staleAfterMs });
   t.after(() => db.close());
   return { hb, advance: ms => { at += ms; }, at: () => at };
 }
@@ -131,10 +131,10 @@ test("hosts and signals survive a restart (new instance on the same database)", 
   const db = new DatabaseSync(":memory:");
   db.exec(agentHeartbeatSchema);
   let at = T0;
-  const first = new AgentHeartbeats({ db, now: () => at });
+  const first = new AgentHeartbeats({ db, now: () => at, transaction: fn => { db.exec("BEGIN IMMEDIATE"); try { const result = fn(); db.exec("COMMIT"); return result; } catch (error) { db.exec("ROLLBACK"); throw error; } } });
   first.heartbeat(wakeable());
   first.enqueueWake({ agentId: "ai_testagent", kind: "mention", roomId: "r", messageId: "m1" });
-  const second = new AgentHeartbeats({ db, now: () => at });
+  const second = new AgentHeartbeats({ db, now: () => at, transaction: fn => { db.exec("BEGIN IMMEDIATE"); try { const result = fn(); db.exec("COMMIT"); return result; } catch (error) { db.exec("ROLLBACK"); throw error; } } });
   assert.equal(second.verifySchema(), true);
   assert.equal(second.statusOf("ai_testagent").status, "online");
   assert.equal(second.pendingWakes("ai_testagent").length, 1);

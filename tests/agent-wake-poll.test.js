@@ -63,7 +63,7 @@ function unit(t) {
   const db = new DatabaseSync(":memory:");
   db.exec(agentHeartbeatSchema);
   let at = T0;
-  const hb = new AgentHeartbeats({ db, now: () => at }, { staleAfterMs: HEARTBEAT_STALE_AFTER_MS });
+  const hb = new AgentHeartbeats({ db, now: () => at, transaction: fn => { db.exec("BEGIN IMMEDIATE"); try { const result = fn(); db.exec("COMMIT"); return result; } catch (error) { db.exec("ROLLBACK"); throw error; } } }, { staleAfterMs: HEARTBEAT_STALE_AFTER_MS });
   t.after(() => db.close());
   return { hb, advance: ms => { at += ms; } };
 }
