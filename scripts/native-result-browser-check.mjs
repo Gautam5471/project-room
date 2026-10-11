@@ -180,9 +180,22 @@ for (const theme of ["dark", "light"]) test(`native result 320px ${theme}: read,
     assert.match(await page.locator("#result-status").textContent(), /Submitted by Room owner.*exact stored text/);
     assert.equal(await page.locator("#close-result").evaluate(node => node === document.activeElement), true);
     await measure(stage, "#result-dialog", "#result-body");
+    // Reading a result records the reader's basis, so the next snapshot can
+    // re-render this card (it gains "What changed since revision N") and
+    // replace the View result node; renderMessages then restores focus to the
+    // replacement by data-focus-key. Polling a locator across that swap races
+    // (it can resolve the detached node). Wait until focus settles on this
+    // work's View result control for two frames, then check that control.
+    const opener = await read.elementHandle();
     await page.keyboard.press("Escape"); await page.locator("#result-dialog").waitFor({ state: "hidden" });
-    assert.equal(await read.evaluate(node => node === document.activeElement), true,
-      `reader returns to this work's result control; ${JSON.stringify(await trace())}`);
+    const settled = await page.waitForFunction(({ id, key }) => new Promise(resolve => {
+      const ok = () => { const a = document.activeElement; return a?.dataset.focusKey === key && a.closest("[data-work-record-id]")?.dataset.workRecordId === id && a.isConnected; };
+      if (!ok()) return resolve(false);
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve(ok())));
+    }), { id: f.workItemId, key: `work-native-result:${f.workItemId}` }, { timeout: 5000 }).then(() => true, () => false);
+    const swap = await opener.evaluate(node => ({ sameNode: node === document.activeElement, openerConnected: node.isConnected }));
+    assert.ok(settled && (swap.sameNode || !swap.openerConnected),
+      `reader returns to this work's result control; ${JSON.stringify({ swap, ...(await trace()) })}`);
     assert.equal(page.url(), initialUrl);
   };
   await readExact("reader-before");
