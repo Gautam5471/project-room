@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { RoomStore } from "../server/store.mjs";
 import { createRoomServer } from "../server/http.mjs";
 import { initialRoom } from "../server/bootstrap.mjs";
-import { EVENT_TYPES as T } from "../src/events.js";
+import { EVENT_TYPES as T, HISTORY_DEFAULTS_VERSION } from "../src/events.js";
 
 // priv-share-link-agent-reads-full-history-20261011 (found on prod dd0a2d52):
 // an agent that joins through a guest share link (POST /api/share-links/join-agent)
@@ -18,10 +18,12 @@ import { EVENT_TYPES as T } from "../src/events.js";
 const BEFORE = "sla-before-4b1c";
 const AFTER = "sla-after-4b1d";
 
-async function setup(t) {
+async function setup(t, { v1 = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "share-agent-"));
   const store = new RoomStore(join(directory, "room.sqlite"));
-  store.initialize(initialRoom()); // no historyDefaultsVersion: older-style room
+  const seed = initialRoom(); // no historyDefaultsVersion: older-style room
+  if (v1) seed[0].data.historyDefaultsVersion = HISTORY_DEFAULTS_VERSION;
+  store.initialize(seed);
   const ownerKey = store.issueAccessKey("commons", "owner");
   const cmd = (type, data) => store.command(ownerKey, "commons", { id: randomUUID(), type, data });
   cmd(T.MESSAGE_POSTED, { messageId: "before", body: BEFORE });
@@ -77,4 +79,11 @@ test("the owner's explicit 'all' restores the link agent's history; 'since_join'
   assert.deepEqual((await f.read(f.guestAgent.secret)).ids, ["before", "after"]);
   f.cmd(T.ROOM_HISTORY_VISIBILITY_SET, { historyVisibility: "since_join" });
   assert.deepEqual((await f.read(f.guestAgent.secret)).ids, ["after"]);
+});
+
+test("v1 room (historyDefaultsVersion set): the guest-link agent also reads only from its join", async t => {
+  const f = await setup(t, { v1: true });
+  assert.equal(f.store.room("commons").state.room.historyDefaultsVersion, HISTORY_DEFAULTS_VERSION);
+  assert.deepEqual((await f.read(f.guestAgent.secret)).ids, ["after"]);
+  assert.deepEqual((await f.read(f.memberAgent.secret)).ids, ["before", "after"]);
 });
