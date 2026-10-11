@@ -120,6 +120,11 @@ export const ALLOWLIST = [
     // example.invalid URL token; obvious placeholder, not a credential
   /token=not-for-export/, // scripts/result-copy-browser-check.mjs:23 —
     // example.invalid URL token; obvious placeholder, not a credential
+  /\/api\/agent-wakes\/poll\?hostId=my-runtime/, // deploy/agent-discovery.mjs —
+    // onboarding-skill docs example of the wake poll URL (Step 5b). No
+    // credentials on the line; the query string trips the high-entropy
+    // detector. Overlaps only the docs URL span, so a real secret on the
+    // same line still flags (per-finding allowlist).
 
 ];
 
