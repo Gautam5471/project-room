@@ -369,7 +369,10 @@
           <section id="activity-preview" class="needs-attention" aria-label="Recent activity for you" hidden>
             <header class="attention-header">
               <h3><span class="attention-icon" aria-hidden="true">✦</span> Needs your attention <span id="activity-preview-count" class="count-chip"></span></h3>
-              <button id="activity-preview-open" class="button ghost" type="button">Open activity</button>
+              <span class="attention-actions">
+                <button id="activity-preview-open" class="button ghost" type="button">Open activity</button>
+                <button id="activity-preview-dismiss" class="button ghost" type="button">Dismiss</button>
+              </span>
             </header>
             <ol id="activity-preview-list" class="attention-list"></ol>
           </section>
