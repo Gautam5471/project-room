@@ -32,3 +32,16 @@ test('orientation bounds current work, excludes history and retains source ident
   assert.equal(roomOrientation(state).activeWorkTotal, 4);
   assert.equal(roomOrientation(state).activeWork.length, 3);
 });
+
+test('orientation keeps a submitted result that still waits on verification or a decision as active work', () => {
+  const state = base();
+  const receipt = { eventId: 'complete-1', evidenceVersion: 'v1', summary: 'Three venues' };
+  const at = '2026-10-11T00:00:00Z';
+  state.workItems.review = { id: 'review', title: 'Awaiting verification', state: 'completed', revision: 3, updatedAt: at, receipt, independentVerificationRequired: true, verifications: [] };
+  state.workItems.decide = { id: 'decide', title: 'Awaiting decision', state: 'completed', revision: 3, updatedAt: at, receipt, ownerDecisionRequired: true };
+  state.workItems.done = { id: 'done', title: 'Done', state: 'completed', revision: 3, updatedAt: at, receipt };
+  state.workItems.bare = { id: 'bare', title: 'No receipt', state: 'completed', revision: 1, updatedAt: at, receipt: { summary: 'not a submission' } };
+  const view = roomOrientation(state);
+  assert.deepEqual(view.activeWork.map(w => w.id).sort(), ['decide', 'review']);
+  assert.equal(view.activeWorkTotal, 2);
+});

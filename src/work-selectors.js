@@ -28,8 +28,12 @@ export function completedResults(state) {
 // Read-only source projection: never a generated consensus or an access grant.
 export function roomOrientation(state) {
   const instructions = state.room.charter;
+  // A submitted result that still waits on verification or a decision is
+  // current work, not history; otherwise it vanishes from both lists.
+  const awaitingGate = item => item.state === "completed" && Boolean(item.receipt?.eventId)
+    && Boolean(item.receipt?.evidenceVersion) && !terminalWork(item);
   const work = Object.values(state.workItems).filter(item => !item.supersededBy
-    && ["proposed", "accepted", "working", "blocked"].includes(item.state))
+    && (["proposed", "accepted", "working", "blocked"].includes(item.state) || awaitingGate(item)))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
   return {
     version: 1,

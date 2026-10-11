@@ -35,7 +35,9 @@ for (const mobile of [false, true]) test(`room overview ${mobile ? 'mobile' : 'd
   f.send('owner', T.ROOM_CHARTER_UPDATED, { expectedRevision: 0, purpose: 'Current shared purpose', outputs: null, boundaries: null, escalation: null });
   await page.waitForFunction(() => document.querySelector('#room-overview-purpose').textContent === 'Current shared purpose');
   assert.equal(await dialog.locator('[data-open-work="native-result"]').count(), 1);
-  assert.equal(await dialog.locator('[data-open-work="pending-result"]').count(), 0, 'unverified completion is not presented as a finished result');
+  const section = heading => dialog.locator('section').filter({ has: page.locator('h3', { hasText: heading }) });
+  assert.equal(await section('Recent results').locator('[data-open-work="pending-result"]').count(), 0, 'unverified completion is not presented as a finished result');
+  assert.equal(await section(/^Active work/).locator('[data-open-work="pending-result"]').count(), 1, 'a result still waiting on review stays visible as active work');
   assert.equal(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   mkdirSync('test-results/room-overview', { recursive: true });
