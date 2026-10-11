@@ -5,6 +5,7 @@ import { currentResult } from './work-selectors.js';
 // state on the card itself, not only under the collapsed Activity list.
 export const NOT_PICKED_UP_MS = 10000;
 const CLOSED = ['done', 'failed', 'cancelled'];
+const CONNECTION_INTERRUPTED = 'Connection interrupted';
 export function faceRun(runs) {
   const list = Object.values(runs ?? {}).filter(run => !run.sourceDeleted);
   const latest = items => items.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0] ?? null;
@@ -12,12 +13,13 @@ export function faceRun(runs) {
 }
 export function askFaceStatus(run, now = Date.now()) {
   if (!run) return null;
+  if (run.stopOutcome === 'attempt_revoked') return { key: 'unknown', text: CONNECTION_INTERRUPTED };
   const waited = Math.max(0, now - (run.createdAt ?? now));
   const key = run.status === 'queued' ? (waited >= NOT_PICKED_UP_MS ? 'not_picked_up' : 'asked') : run.status === 'unknown' ? 'stalled' : run.status;
   const textKey = ({ asked: 'asked', not_picked_up: 'notPickedUp', stalled: 'stalled', working: 'working', paused: 'paused', pause_requested: 'pausing', resume_requested: 'resuming', cancel_requested: 'stopping', needs_input: 'needsDecision', done: 'done', failed: 'failed', cancelled: 'stopped' })[key];
   return { key, text: textKey ? uiText(`human.face.${textKey}`) : run.status };
 }
-export function installHumanExperience({ getState, getSession, client, notice, openWork, openMessage, selectResult, refreshTranscript }) {
+export function installHumanExperience({ getState, getSession, client, notice, openWork, openMessage, startContribution, getContribution, endContribution, selectResult, refreshTranscript }) {
   const $ = selector => document.querySelector(selector);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const human = () => getSession()?.member?.kind === 'human';
@@ -43,7 +45,7 @@ export function installHumanExperience({ getState, getSession, client, notice, o
   ask.textContent = 'Ask Room'; ask.setAttribute('aria-pressed', 'false'); ask.title = uiText("human.copy.002");
   const composerActions = document.createElement('div'); composerActions.className = 'human-composer-actions';
   composerActions.append($('#composer-options'), ask); $('.composer-row').append(composerActions);
-  ask.addEventListener('click', () => { selected = !selected; if (!selected) { contribution = null; ask.textContent = 'Ask Room'; } ask.setAttribute('aria-pressed', String(selected)); $('#message-input').focus(); });
+  ask.addEventListener('click', () => { selected = !selected; if (!selected) { contribution = null; endContribution?.(); ask.textContent = 'Ask Room'; } ask.setAttribute('aria-pressed', String(selected)); $('#message-input').focus(); });
   const advanced = document.createElement('label'); advanced.className = 'check';
   advanced.innerHTML = uiText("human.copy.003");
   $('#settings-dialog').append(advanced);
@@ -104,14 +106,15 @@ export function installHumanExperience({ getState, getSession, client, notice, o
       }).join('');
       const editable = !sourceDeleted && !['done','failed','cancelled','cancel_requested'].includes(run.status);
       const resultMessage = !sourceDeleted && run.status === 'done' && run.resultMessageId ? getState().messages.find(m => m.id === run.resultMessageId) : null;
-      return ["<article class=\"assistant-run\" data-assistant-run=\"", esc(run.id), "\"><strong>", esc(sourceDeleted ? uiText('human.deletedRequest') : source?.body?.slice(0,160) || 'Shared request'), "</strong><p>", esc(({ queued: uiText("human.copy.010"), not_picked_up: uiText("human.askNotPickedUp"), working: 'Working', stalled: uiText("human.askStalled"), unknown: 'Connection interrupted', paused: 'Paused', resume_requested: uiText("human.copy.011"), pause_requested: uiText("human.copy.012"), cancel_requested: uiText("human.copy.013"), done: 'Result ready', failed: "Couldn't finish", needs_input: 'Needs input', cancelled: 'Cancelled' })[run.displayStatus ?? run.status] || run.status), "</p>", resultMessage?.body ? ["<p class=\"assistant-run-result\"><strong>", uiText("human.askResult"), "</strong> ", esc(resultMessage.body.slice(0,400)), "</p>"].join('') : '', sourceDeleted ? '' : ["<button type=\"button\" class=\"text-button\" data-assistant-message=\"", esc(run.sourceMessageId), "\">Original prompt</button>"].join(''), !sourceDeleted && run.resultMessageId ? `<button type="button" class="text-button" data-assistant-message="${esc(run.resultMessageId)}">Open result</button>` : '', "", (sourceDeleted ? [] : run.activity ?? []).slice(-5).map(a => `<p>${esc(a.summary)}</p>`).join(''), "", inputs, "", editable ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">Add context</button>"].join('') : '', "", editable && run.status !== 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-conflict=\"true\" data-revision=\"", run.revision, "\">Change direction</button>"].join('') : '', "", controls && !sourceDeleted && run.status === 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-resolve=\"true\" data-revision=\"", run.revision, "\">Resolve direction</button>"].join('') : '', "", controls && ['queued', 'working', 'unknown', 'not_picked_up', 'stalled'].includes(run.status) ? ["<button type=\"button\" class=\"text-button\" data-pause-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">Pause</button>"].join('') : controls && !sourceDeleted && run.status === 'paused' ? ["<button type=\"button\" class=\"text-button\" data-pause-run=\"", esc(run.id), "\" data-resume=\"true\" data-revision=\"", run.revision, "\">Resume</button>"].join('') : '', controls && !['done','failed','cancelled','cancel_requested'].includes(run.status) ? uiText("human.stopRequest", { runId: esc(run.id), revision: run.revision }) : '', "</article>"].join('');
+      return ["<article class=\"assistant-run\" data-assistant-run=\"", esc(run.id), "\" data-attempt-id=\"", esc(run.attemptId ?? ''), "\"><strong>", esc(sourceDeleted ? uiText('human.deletedRequest') : source?.body?.slice(0,160) || 'Shared request'), "</strong><p>", esc(({ queued: uiText("human.copy.010"), not_picked_up: uiText("human.askNotPickedUp"), working: 'Working', stalled: uiText("human.askStalled"), unknown: CONNECTION_INTERRUPTED, paused: 'Paused', resume_requested: uiText("human.copy.011"), pause_requested: uiText("human.copy.012"), cancel_requested: uiText("human.copy.013"), done: 'Result ready', failed: "Couldn't finish", needs_input: 'Needs input', cancelled: 'Cancelled' })[run.displayStatus ?? run.status] || run.status), "</p>", resultMessage?.body ? ["<p class=\"assistant-run-result\"><strong>", uiText("human.askResult"), "</strong> ", esc(resultMessage.body.slice(0,400)), "</p>"].join('') : '', sourceDeleted ? '' : ["<button type=\"button\" class=\"text-button\" data-assistant-message=\"", esc(run.sourceMessageId), "\">Original prompt</button>"].join(''), !sourceDeleted && run.resultMessageId ? `<button type="button" class="text-button" data-assistant-message="${esc(run.resultMessageId)}">Open result</button>` : '', "", (sourceDeleted ? [] : run.activity ?? []).slice(-5).map(a => `<p>${esc(a.summary)}</p>`).join(''), "", inputs, "", editable ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">Add context</button>"].join('') : '', "", editable && run.status !== 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-conflict=\"true\" data-revision=\"", run.revision, "\">Change direction</button>"].join('') : '', "", controls && !sourceDeleted && run.status === 'needs_input' ? ["<button type=\"button\" class=\"text-button\" data-contribute-run=\"", esc(run.id), "\" data-resolve=\"true\" data-revision=\"", run.revision, "\">Resolve direction</button>"].join('') : '', "", controls && ['queued', 'working', 'unknown', 'not_picked_up', 'stalled'].includes(run.status) ? ["<button type=\"button\" class=\"text-button\" data-pause-run=\"", esc(run.id), "\" data-revision=\"", run.revision, "\">Pause</button>"].join('') : controls && !sourceDeleted && run.status === 'paused' ? ["<button type=\"button\" class=\"text-button\" data-pause-run=\"", esc(run.id), "\" data-resume=\"true\" data-revision=\"", run.revision, "\">Resume</button>"].join('') : '', controls && !['done','failed','cancelled','cancel_requested'].includes(run.status) ? uiText("human.stopRequest", { runId: esc(run.id), revision: run.revision }) : '', "</article>"].join('');
     }).join('');
     const current = faceRun(Object.values(projection.runs ?? {}).filter(run => !getState().messages.find(m => m.id === run.sourceMessageId)?.deletedAt)), status = askFaceStatus(current);
     const faceSource = current && getState().messages.find(m => m.id === current.sourceMessageId);
     const faceControls = current && (getState().room.ownerId === getSession().member.id || current.initiatorId === getSession().member.id);
-    const faceKey = current ? JSON.stringify([current.id, current.revision, current.status, current.resultMessageId, faceControls, faceSource?.body?.slice(0, 120)]) : '';
+    const faceKey = current ? JSON.stringify([current.id, current.revision, current.status, current.attemptId, current.stopOutcome, current.resultMessageId, faceControls, faceSource?.body?.slice(0, 120)]) : '';
     if (face._key !== faceKey) {
       face._key = faceKey;
+      face.dataset.attemptId = current?.attemptId ?? '';
       const focusedData = faceActions.contains(document.activeElement) ? { ...document.activeElement.dataset } : null;
       faceActions.replaceChildren();
       if (current) {
@@ -132,6 +135,16 @@ export function installHumanExperience({ getState, getSession, client, notice, o
       if (focused) { const replacement = [...panel.querySelectorAll('button')].find(b => b.closest('[data-assistant-run]').dataset.assistantRun === runId && b.textContent === label); (replacement || $('#assistant-activity summary')).focus({preventScroll:true}); }
     }
     $('#assistant-error').textContent = error; $('#assistant-retry').hidden = !operation; $('#assistant-review').hidden = !rejectedOperation; $('#assistant-discard').hidden = !operation && !rejectedOperation; ask.disabled = Boolean(operation);
+  }
+  function syncContribution() {
+    const scoped = getContribution?.();
+    if (scoped) {
+      contribution = { action: scoped.action, runId: scoped.runId, expectedRevision: scoped.expectedRevision, ...(scoped.action === 'resolve' ? {} : { conflict: scoped.conflict }) };
+      selected = true; ask.textContent = scoped.action === 'resolve' ? 'Resolve direction' : scoped.conflict ? 'Change direction' : 'Add context';
+      ask.setAttribute('aria-pressed', 'true');
+    } else if (contribution) {
+      contribution = null; selected = false; ask.textContent = 'Ask Room'; ask.setAttribute('aria-pressed', 'false');
+    }
   }
   async function refresh() {
     if (!human() || !getState() || reading || document.hidden || Date.now() - lastRead < 1500) return;
@@ -167,12 +180,15 @@ export function installHumanExperience({ getState, getSession, client, notice, o
     const message = event.target.closest('[data-assistant-message]'); if (message) { openMessage(message.dataset.assistantMessage); return; }
     const context = event.target.closest('[data-contribute-run]');
     if (context) {
-      contribution = { action: context.dataset.resolve ? 'resolve' : 'contribute', runId: context.dataset.contributeRun, expectedRevision: Number(context.dataset.revision), ...(context.dataset.resolve ? {} : { conflict: context.dataset.conflict === 'true' }) };
-      selected = true; ask.textContent = context.dataset.resolve ? 'Resolve direction' : context.dataset.conflict ? 'Change direction' : 'Add context'; ask.setAttribute('aria-pressed', 'true'); $('#message-input').focus(); return;
+      const run = projection?.runs?.find(run => run.id === context.dataset.contributeRun);
+      if (!run) return;
+      const wanted = { action: context.dataset.resolve ? 'resolve' : 'contribute', runId: context.dataset.contributeRun, expectedRevision: Number(context.dataset.revision), ...(context.dataset.resolve ? {} : { conflict: context.dataset.conflict === 'true' }) };
+      if (!startContribution?.(run.sourceMessageId, wanted)) return;
+      syncContribution(); $('#message-input').focus(); return;
     }
     const button = event.target.closest('[data-pause-run]'); if (!button) return;
     if (operation) return;
-    operation = { action: button.dataset.cancel ? 'cancel' : button.dataset.resume ? 'resume' : 'pause', requestId: crypto.randomUUID(), runId: button.dataset.pauseRun, expectedRevision: Number(button.dataset.revision) };
+    operation = { action: button.dataset.cancel ? 'cancel' : button.dataset.resume ? 'resume' : 'pause', requestId: crypto.randomUUID(), runId: button.dataset.pauseRun, expectedRevision: Number(button.dataset.revision), ...(button.dataset.resume ? {} : { expectedAttemptId: button.closest('[data-attempt-id]')?.dataset.attemptId || null }) };
     // Save the exact operation before dispatch; a lost response cannot create a second stop/resume.
     persistOperation(); button.setAttribute('aria-disabled', 'true'); await invoke(); // aria-disabled keeps focus (R5-1); `if (operation)` already blocks a second submit
 
@@ -249,7 +265,17 @@ export function installHumanExperience({ getState, getSession, client, notice, o
       // Message tombstones must hide cached activity even if assistant reads fail.
       paint(); void refresh();
     },
-    intent(content) { const solo = Object.values(getState()?.members ?? {}).filter(m => m.active !== false && m.kind === 'human').length === 1 && projection?.assistant.coordinatorMemberId; return !operation && human() && !content.toMemberId && (selected || /^@Room\b/i.test(content.body) || solo) ? { ...(contribution || { action: 'invoke' }) } : null; },
+    syncContribution,
+    intent(content) {
+      syncContribution();
+      if (contribution) {
+        const run = projection?.runs?.find(run => run.id === contribution.runId);
+        const source = getState()?.messages.find(message => message.id === run?.sourceMessageId);
+        if (!source || content.replyToId !== source.id || (content.channelId ?? 'general') !== (source.channelId ?? 'general')) {
+          return null;
+        }
+      }
+      const solo = Object.values(getState()?.members ?? {}).filter(m => m.active !== false && m.kind === 'human').length === 1 && projection?.assistant.coordinatorMemberId; return !operation && human() && !content.toMemberId && (contribution || selected || /^@Room\b/i.test(content.body) || solo) ? { ...(contribution || { action: 'invoke' }) } : null; },
     shareResult(item) {
       if (!human() || document.body.classList.contains('human-advanced')) return false;
       if (!resultEntry?.command || resultEntry.workId !== item.id || resultEntry.boundary !== key()) {

@@ -7,7 +7,7 @@ import { RoomStore } from "../server/store.mjs";
 import { initialRoom } from "../server/bootstrap.mjs";
 import { EVENT_TYPES as T, replay } from "../src/events.js";
 import { setTier } from "../server/autonomy-tiers.mjs";
-import { conversationIndex, searchMessages, ConversationDrafts, messageCluster, mentionQuery, mentionMatches, insertMention, mentionHtml, GROUP_WINDOW_MS, kindLabel, memberStatus, memberHandle, memberPresence, memberOnLine, memberDoneChip, presenceLabel, addressMember, shouldAddressPresenceClick, messageMentionsMember, replyAuthorToAddress, escapeChatAction, composerPlaceholder, removeMention, parseSearchQuery, messageAddressesMember, reactionPills, REACTIONS } from "../src/conversation.js";
+import { conversationIndex, searchMessages, ConversationDrafts, DraftRecovery, messageCluster, mentionQuery, mentionMatches, insertMention, mentionHtml, GROUP_WINDOW_MS, kindLabel, memberStatus, memberHandle, memberPresence, memberOnLine, memberDoneChip, presenceLabel, addressMember, shouldAddressPresenceClick, messageMentionsMember, replyAuthorToAddress, escapeChatAction, composerPlaceholder, removeMention, parseSearchQuery, messageAddressesMember, reactionPills, REACTIONS } from "../src/conversation.js";
 import { draftCommand } from "../src/client.js";
 
 function room(t) {
@@ -372,4 +372,33 @@ test("timeline window renders the newest messages and widens a page at a time", 
   assert.equal(windowTimeline(rows, widened).hidden, 0);
   const mid = windowToInclude(rows, "m5000");
   assert.ok(windowTimeline(rows, mid).messages.some(row => row.id === "m5000"));
+});
+
+
+test("assistant drafts recover independently of the destination thread and reject changed scope", () => {
+  const state = { members: { owner: {}, peer: {} }, channels: { design: { id: 'design' } }, messages: [
+    { id: 'root', channelId: 'design', replyToId: null, toMemberId: null, body: 'Design' },
+    { id: 'ask', channelId: 'design', replyToId: 'root', toMemberId: null, body: 'Help us' }
+  ] };
+  const memory = new Map(), recovery = new DraftRecovery({ getItem: k => memory.get(k), setItem: (k,v) => memory.set(k,v), removeItem: k => memory.delete(k) }, () => 1000);
+  const drafts = new ConversationDrafts(), key = 'assistant:run';
+  const assistantDraft = { action: 'contribute', runId: 'run', sourceMessageId: 'ask', expectedRevision: 4, conflict: false };
+  const data = { messageId: 'addition', body: 'Keep it simple', toMemberId: null, replyToId: 'ask', channelId: 'design' };
+  const pending = draftCommand(null, 'message.posted', data);
+  drafts.save('root', { body: 'Private unfinished thought', toMemberId: 'peer', replyToId: 'root', channelId: 'design' });
+  drafts.save(key, { ...data, toMemberId: '', assistantDraft, pending });
+  recovery.write('scope', drafts, 'root', key);
+  const saved = memory.get(recovery.key), restored = recovery.read('scope', state);
+  assert.equal(restored.activeKey, key); assert.equal(restored.threadId, 'root');
+  assert.deepEqual(restored.drafts.get(key).assistantDraft, assistantDraft);
+  assert.deepEqual(restored.drafts.get(key).pending, pending);
+  assert.equal(restored.drafts.get('root').body, 'Private unfinished thought');
+  assert.equal(restored.drafts.get('root').toMemberId, 'peer');
+  assert.equal(restored.drafts.get('root').replyToId, 'root');
+  for (const patch of [{ toMemberId: 'peer' }, { replyToId: 'root' }, { channelId: 'general' },
+    { assistantDraft: { ...assistantDraft, action: 'cancel' } }, { assistantDraft: { ...assistantDraft, runId: 'other' } }]) {
+    const changed = JSON.parse(saved); Object.assign(changed.entries.find(([id]) => id === key)[1], patch);
+    memory.set(recovery.key, JSON.stringify(changed));
+    assert.equal(recovery.read('scope', state).drafts.entries.has(key), false);
+  }
 });
