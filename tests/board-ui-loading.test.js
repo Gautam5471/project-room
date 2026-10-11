@@ -404,3 +404,25 @@ test("a completed Board action moves focus to the finished card when its button 
   assert.ok(heading, "the finished card is still on the board");
   assert.equal(dom.active(), heading, "focus lands on the finished card heading, not the page body");
 });
+
+// --- deploy chip: a known mismatch is not "unknown" ---
+// The server sends behind = 0 when live and main match and null otherwise
+// (server/claim-pr-sync.mjs readRoomDeployStatus), never a positive count, so
+// the chip must read the two shas to tell "differs" from "can't tell".
+const SHA_A = "a".repeat(40), SHA_B = "b".repeat(40);
+const liveChip = status => /<p class="live-chip">([^<]*)<\/p>/.exec(boardHtml([], status, viewer, {}, NOW, { canWrite: true }))?.[1];
+
+test("deploy chip: matching shas read as matching", () => {
+  assert.equal(liveChip({ live: SHA_A, main: SHA_A, behind: 0, checkedAt: "2026-10-11T00:00:00Z" }), "Live matches main");
+});
+
+test("deploy chip: both shas known and different is its own state, not unknown", () => {
+  assert.equal(liveChip({ live: SHA_A, main: SHA_B, behind: null, checkedAt: "2026-10-11T00:00:00Z" }), "Live differs from main");
+});
+
+test("deploy chip: a missing sha, no status, or a held (stale) read stays unknown", () => {
+  for (const status of [null, {}, { live: SHA_A, main: null, behind: null }, { live: null, main: SHA_B, behind: null },
+    { live: "unstamped", main: SHA_B, behind: null }, { live: SHA_A, main: SHA_B, behind: null, stale: true, heldUntil: "2026-10-11T01:00:00Z" }]) {
+    assert.equal(liveChip(status), "Deploy status unknown", JSON.stringify(status));
+  }
+});
