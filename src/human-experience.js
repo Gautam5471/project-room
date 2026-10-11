@@ -270,7 +270,8 @@ export function installHumanExperience({ getState, getSession, client, notice, o
       syncContribution();
       if (contribution) {
         const run = projection?.runs?.find(run => run.id === contribution.runId);
-        const source = getState()?.messages.find(message => message.id === run?.sourceMessageId);
+        const sourceId = getContribution?.()?.sourceMessageId ?? run?.sourceMessageId;
+        const source = getState()?.messages.find(message => message.id === sourceId);
         if (!source || content.replyToId !== source.id || (content.channelId ?? 'general') !== (source.channelId ?? 'general')) {
           return null;
         }
