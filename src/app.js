@@ -2313,7 +2313,10 @@ function renderMessages() {
   const focusedMessage = focused?.matches(".message");
   const newMessages = sameView && !revealing ? messages.filter(m => !previous.has(`message:${m.id}`)) : [];
   const newCount = newMessages.length;
-  if (!sameView || nearBottom) unreadAnchorId = null;
+  // Your own message, sent from this browser, always comes into view: it is
+  // not news to you, and a "jump to latest" pill for it hides what you just said.
+  const ownArrival = sameView && newMessages.some(m => locallyOwnedMessageIds.has(m.id));
+  if (!sameView || nearBottom || ownArrival) unreadAnchorId = null;
   else if (!unreadAnchorId && newMessages[0]) unreadAnchorId = newMessages[0].id;
   // New arrivals while the user watches the bottom count as read (debounced).
   if (sameView && nearBottom && newCount > 0) scheduleHorizonAdvance();
@@ -2454,7 +2457,7 @@ function renderMessages() {
   restoreTimelineSelection(list, savedSelection);
   list.dataset.view = view;
   if (!sameView) { list.scrollTop = viewPositions.get(view) ?? list.scrollHeight; newVisibleMessages = 0; }
-  else if (nearBottom && !focused) { list.scrollTop = list.scrollHeight; newVisibleMessages = 0; }
+  else if ((nearBottom || ownArrival) && !focused) { list.scrollTop = list.scrollHeight; newVisibleMessages = 0; }
   else {
     if (!pageScroll && anchor?.isConnected) list.scrollTop += anchor.getBoundingClientRect().top - anchorOffset;
     newVisibleMessages += newCount;
