@@ -74,3 +74,37 @@ test("the worker serves /install.sh from scripts/install.sh", async () => {
   assert.equal(await response.text(), script.toString());
   assert.match(response.headers.get("x-robots-tag"), /noindex/);
 });
+
+test("install.sh network path: a release whose SHA256SUMS names the asset installs", async t => {
+  const { createServer } = await import("node:http");
+  const { spawn } = await import("node:child_process");
+  const root = mkdtempSync(join(tmpdir(), "room-install-net-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const built = release(root, "project-room-runtime");
+  const bytes = readFileSync(built.tarball);
+  let origin = "";
+  const server = createServer((req, res) => {
+    if (req.url === "/release") {
+      res.setHeader("content-type", "application/json");
+      return res.end(JSON.stringify({ assets: [
+        { name: "project-room-runtime.tar.gz", browser_download_url: origin + "/dl/project-room-runtime.tar.gz" },
+        { name: "SHA256SUMS", browser_download_url: origin + "/dl/SHA256SUMS" }] }));
+    }
+    if (req.url === "/dl/project-room-runtime.tar.gz") return res.end(bytes);
+    if (req.url === "/dl/SHA256SUMS") return res.end(built.hash + "  project-room-runtime.tar.gz\n");
+    res.statusCode = 404; res.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  origin = `http://127.0.0.1:${server.address().port}`;
+  const home = join(root, "home");
+  mkdirSync(home);
+  const { NODE_USE_ENV_PROXY, HTTP_PROXY, HTTPS_PROXY, http_proxy, https_proxy, ...env } = process.env;
+  const child = spawn("sh", [fileURLToPath(new URL("../scripts/install.sh", import.meta.url))], { env: { ...env, HOME: home,
+    PATH: dirname(process.execPath) + ":" + (process.env.PATH ?? ""), PROJECT_ROOM_HOME: home, PROJECT_ROOM_RELEASE_API: origin + "/release" } });
+  let stderr = "";
+  child.stderr.on("data", chunk => { stderr += chunk; });
+  const status = await new Promise(resolve => child.on("close", resolve));
+  assert.equal(status, 0, stderr);
+  assert.equal(statSync(join(home, ".project-room", "bin", "room")).mode & 0o111, 0o111);
+});
