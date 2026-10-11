@@ -449,6 +449,7 @@ const client = new RoomClient({
   onTyping(typists) { renderTyping(typists); },
   onAccessEnded() {
     closeRoomActions(false);
+    const hadRoom = Boolean(state);
     const endedContext = accessEndContext;
     accessEndContext = null;
     const pendingSignout = signoutLoading;
@@ -459,7 +460,10 @@ const client = new RoomClient({
     // persisted backup, the in-memory drafts, and the composer text so
     // re-authentication restores them.
     const sessionExpired = shouldPreserveDrafts({ leavingPage, pendingSignout, endedContext });
-    if (!leavingPage && !sessionExpired) recovery.clear();
+    // Opening a room from the room list ends "access" first, with no room open. That
+    // must not wipe the draft an expired session left for this same room (E-H2).
+    const openingFromList = !hadRoom && ["accepted-room-switch", "invited-room-switch"].includes(endedContext);
+    if (!leavingPage && !sessionExpired && !openingFromList) recovery.clear();
     releaseSubmission(submitControls);
     submitOperationId += 1; busy = false;
     displayNames = createMemberDisplayNames({});
@@ -574,6 +578,9 @@ const client = new RoomClient({
     if (keepAccount) {
       showAccountWorkspace();
       if (!["accepted-room-switch", "invited-room-switch"].includes(endedContext)) confirmAccount();
+      // The room credential died while the account is still signed in: say so, and
+      // say how to get back, instead of silently dropping to the room list.
+      if (hadRoom && sessionExpired) { $("#account-status").textContent = uiText("room.session_ended"); $("#account-status").hidden = false; }
       return;
     }
     const openingAcceptedRoom = endedContext === "accepted-room-switch";

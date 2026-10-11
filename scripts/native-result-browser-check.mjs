@@ -8,6 +8,7 @@ import { createRoomServer } from "../server/http.mjs";
 import { EVENT_TYPES as T } from "../src/events.js";
 import { textVersion } from "../server/text-results.mjs";
 import { signInFixture } from "./auth-signin.mjs";
+import { clickChrome } from "./room-chrome.mjs";
 
 async function setup(t, { mobile = false, review = false, viewport = null, body = "  A quiet room\n\nCafé 🪷 — one clear next step.  \n" } = {}) {
   const f = createAcceptanceFixture(), workItemId = "native-human";
@@ -341,4 +342,45 @@ test("native result 320px: a live update keeps the focused View result control o
   await page.waitForTimeout(500);
   const after = await where();
   assert.ok(after.top >= 0 && after.bottom <= after.h, `focused control on screen after live updates: ${JSON.stringify({ before, mid, after })}`);
+});
+
+// A room credential that dies while the account is still signed in used to drop
+// the member to the room list with no explanation.
+test("a room session that ends under a live account says so and points back to the room list", { timeout: 30000 }, async t => {
+  const f = createAcceptanceFixture();
+  f.store.command(f.keys.owner, "commons", { id: crypto.randomUUID(), type: T.MEMBER_ADDED,
+    data: { memberId: "admin", displayName: "Test admin", kind: "human", permissions: ["manage_members"] } });
+  f.store.createAccount("admin-account"); f.store.completeOnboarding("admin-account"); f.store.bindHumanAccount("commons", "admin", "admin-account");
+  const server = createRoomServer({ store: f.store, streamInterval: 40 });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); server.closeStreams(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); f.store.close(); rmSync(f.directory, { recursive: true, force: true }); });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }); page.setDefaultTimeout(8000);
+  const errors = []; page.on("pageerror", e => errors.push(e.message));
+  await page.goto(`${origin}/?account=1`);
+  await signInFixture(page, f.store.issueAccountAccessKey("admin-account"), { returnTo: `${origin}/?account=1` });
+  await page.locator("#inbox-panel").waitFor();
+  await clickChrome(page, "#nav-rooms");
+  await page.locator('[data-account-room="commons"]').click();
+  await page.locator("#main").waitFor({ state: "visible" });
+  await page.locator("#message-input").fill("A draft that must survive.");
+  let dead = false;
+  await page.route(url => /\/api\/rooms\/commons(\?|$)/.test(new URL(url).pathname + new URL(url).search), route =>
+    dead && route.request().method() === "GET"
+      ? route.fulfill({ status: 401, json: { error: { code: "unauthenticated", message: "Session or key expired or revoked" } } })
+      : route.continue());
+  dead = true;
+  f.store.command(f.keys.owner, "commons", { id: crypto.randomUUID(), type: T.MESSAGE_POSTED, data: { body: "Trigger a refresh", replyToId: "test-welcome" } });
+  const notice = page.locator("#account-status");
+  await notice.waitFor({ state: "visible" });
+  assert.match(await notice.textContent(), /Your session in that room ended\. Open the room again from your room list/);
+  assert.equal(await page.locator("#main").isHidden(), true, "the room is closed");
+  // E-H2: the credential died, the member did not leave. Reopening from the room list
+  // (which ends access with no room open) must bring the unsent draft back.
+  dead = false;
+  await clickChrome(page, "#nav-rooms");
+  await page.locator('[data-account-room="commons"]').click();
+  await page.locator("#main").waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.querySelector("#message-input").value === "A draft that must survive.");
+  assert.deepEqual(errors, []);
 });
