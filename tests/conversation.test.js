@@ -7,7 +7,7 @@ import { RoomStore } from "../server/store.mjs";
 import { initialRoom } from "../server/bootstrap.mjs";
 import { EVENT_TYPES as T, replay } from "../src/events.js";
 import { setTier } from "../server/autonomy-tiers.mjs";
-import { conversationIndex, searchMessages, ConversationDrafts, DraftRecovery, messageCluster, mentionQuery, mentionMatches, insertMention, mentionHtml, GROUP_WINDOW_MS, kindLabel, memberStatus, memberHandle, memberPresence, memberOnLine, memberDoneChip, presenceLabel, addressMember, shouldAddressPresenceClick, messageMentionsMember, replyAuthorToAddress, escapeChatAction, composerPlaceholder, removeMention, parseSearchQuery, messageAddressesMember, reactionPills, REACTIONS } from "../src/conversation.js";
+import { menuOpensUp, conversationIndex, searchMessages, ConversationDrafts, DraftRecovery, messageCluster, mentionQuery, mentionMatches, insertMention, mentionHtml, GROUP_WINDOW_MS, kindLabel, memberStatus, memberHandle, memberPresence, memberOnLine, memberDoneChip, presenceLabel, addressMember, shouldAddressPresenceClick, messageMentionsMember, replyAuthorToAddress, escapeChatAction, composerPlaceholder, removeMention, parseSearchQuery, messageAddressesMember, reactionPills, REACTIONS } from "../src/conversation.js";
 import { draftCommand } from "../src/client.js";
 
 function room(t) {
@@ -401,4 +401,11 @@ test("assistant drafts recover independently of the destination thread and rejec
     memory.set(recovery.key, JSON.stringify(changed));
     assert.equal(recovery.read('scope', state).drafts.entries.has(key), false);
   }
+});
+
+test("a message overflow menu opens upward only when it does not fit below and fits better above", () => {
+  const box = { limitTop: 0, limitBottom: 600, menuHeight: 213 };
+  assert.equal(menuOpensUp({ ...box, triggerTop: 100, triggerBottom: 120 }), false, "room below keeps it downward");
+  assert.equal(menuOpensUp({ ...box, triggerTop: 440, triggerBottom: 460 }), true, "newest message by the composer flips up");
+  assert.equal(menuOpensUp({ ...box, triggerTop: 40, triggerBottom: 60, limitBottom: 200 }), false, "no better room above stays downward");
 });
