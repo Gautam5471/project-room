@@ -15,7 +15,14 @@ function unit(t) {
   db.exec(agentHeartbeatSchema);
   let at = T0;
   t.after(() => db.close());
-  return { hb: new AgentHeartbeats({ db, now: () => at }, {}), advance: ms => { at += ms; } };
+  // The store's transaction runner: join an open transaction, else BEGIN IMMEDIATE.
+  const transaction = fn => {
+    if (db.isTransaction) return fn();
+    db.exec("BEGIN IMMEDIATE");
+    try { const result = fn(); db.exec("COMMIT"); return result; }
+    catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
+  };
+  return { hb: new AgentHeartbeats({ db, now: () => at, transaction }, {}), advance: ms => { at += ms; }, db };
 }
 
 const wakeable = (agentId = "ai_lease", hostId = "host-1") =>
@@ -172,4 +179,20 @@ test("a stale token cannot ack after expiry and reacquisition by another listene
     "stale holder's broadcast ack is fenced after reacquisition");
   const ok = hb.ackWakes({ agentId: "ai_lease", signalIds: ids, fencingToken: b.fencingToken });
   assert.equal(ok.acknowledged.length, 1, "the new live holder drains the batch");
+});
+
+// Durable Objects reject raw BEGIN/SAVEPOINT/COMMIT/ROLLBACK SQL; the store's
+// runner owns the transaction there. Ack must not issue any of it itself.
+test("ackWakes issues no raw transaction SQL (Durable Object SQL rejects it)", t => {
+  const { hb, lease } = leased(t);
+  enqueue(hb, "ai_lease", 1);
+  const ids = claim(hb, lease.fencingToken, 1).signals.map(s => s.signalId);
+  // Stand in for a Durable Object: the injected runner does not touch SQL, and raw
+  // transaction statements are counted (a real DO throws on them).
+  hb.store.transaction = fn => fn();
+  let raw = 0;
+  const exec = hb.db.exec.bind(hb.db);
+  hb.db.exec = sql => { if (/^\s*(BEGIN|SAVEPOINT|RELEASE|COMMIT|ROLLBACK)\b/i.test(sql)) raw++; return exec(sql); };
+  assert.equal(hb.ackWakes({ agentId: "ai_lease", signalIds: ids, fencingToken: lease.fencingToken }).acknowledged.length, 1);
+  assert.equal(raw, 0, "ackWakes left transaction control to the store's runner");
 });
