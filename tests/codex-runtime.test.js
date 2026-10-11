@@ -158,3 +158,12 @@ test("a new adapter reconciles the original timed-out turn without another execu
   assert.deepEqual(await resumed.reconcile(binding), { status: "completed", body: "Reviewed result" });
   assert.equal(rpc.calls.filter(x => x.method === "turn/start").length, 1);
 });
+test("final answer excludes commentary phase output", async t => {
+  const { host, rpc } = setup(t, { complete: false });
+  const executing = host(input, { binding });
+  await waitUntil(() => rpc.calls.some(x => x.method === "turn/start"));
+  rpc.event("item/completed", { threadId: "thread-one", turnId: "turn-one", item: { id: "progress", type: "agentMessage", phase: "commentary", text: "Checking now" } });
+  rpc.event("item/completed", { threadId: "thread-one", turnId: "turn-one", item: { id: "final", type: "agentMessage", phase: "final_answer", text: "Only this is the answer" } });
+  rpc.event("turn/completed", { threadId: "thread-one", turn: { id: "turn-one", status: "completed", items: [] } });
+  assert.deepEqual(await executing, { body: "Only this is the answer" });
+});

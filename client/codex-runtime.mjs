@@ -9,7 +9,9 @@ export const CODEX_RUNTIME_PROTOCOL = "rust-v0.162.1";
 const terminal = new Set(["completed", "interrupted", "failed"]);
 const fields = ["origin", "roomId", "memberId", "requestMessageId", "requestId", "attemptId", "roomCreatedEventId", "openingEventId"];
 const textInput = text => [{ type: "text", text, text_elements: [] }];
-const keyFor = binding => createHash("sha256").update(JSON.stringify(fields.map(key => binding[key]))).digest("hex");
+const bindingFields = binding => binding?.kind === "shared-assistant"
+  ? ["origin", "roomId", "memberId", "runId", "attemptId", "roomCreatedAt", "runCreatedAt"] : fields;
+const keyFor = binding => createHash("sha256").update(JSON.stringify([binding.kind ?? "addressed-request", ...bindingFields(binding).map(key => binding[key])])).digest("hex");
 
 // `rpc` implements request(method, params), notify(method, params), and
 // subscribe(listener) -> unsubscribe. It must reject requests on disconnect;
@@ -33,6 +35,8 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
     CREATE TABLE IF NOT EXISTS codex_runtime_outputs (
     attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, text TEXT NOT NULL,
     PRIMARY KEY(attempt_id,item_id));`);
+  if (!db.prepare("PRAGMA table_info(codex_runtime_outputs)").all().some(column => column.name === "phase"))
+    db.exec("ALTER TABLE codex_runtime_outputs ADD COLUMN phase TEXT");
   const get = id => db.prepare("SELECT * FROM codex_runtime_attempts WHERE id=?").get(id);
   const patch = (id, state) => db.prepare("UPDATE codex_runtime_attempts SET state=? WHERE id=?").run(state, id);
   let initialized;
@@ -41,7 +45,7 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
     rpc.notify("initialized", {});
   })();
   const checked = async (binding, action) => {
-    if (!fields.every(key => typeof binding?.[key] === "string" && binding[key])
+    if (!bindingFields(binding).every(key => typeof binding?.[key] === "string" && binding[key])
       || ["origin", "roomId", "memberId"].some(key => binding[key] !== scope[key]))
       throw new Error("Runtime binding has the wrong Room identity");
     await authorize(binding, action);
@@ -49,7 +53,8 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
   };
   const saveItem = (id, item) => {
     if (item?.type !== "agentMessage" || typeof item.id !== "string" || typeof item.text !== "string") return;
-    db.prepare("INSERT INTO codex_runtime_outputs VALUES(?,?,?) ON CONFLICT(attempt_id,item_id) DO UPDATE SET text=excluded.text").run(id, item.id, item.text);
+    db.prepare("INSERT INTO codex_runtime_outputs VALUES(?,?,?,?) ON CONFLICT(attempt_id,item_id) DO UPDATE SET text=excluded.text,phase=excluded.phase")
+      .run(id, item.id, item.text, item.phase ?? null);
   };
   const recordTurn = (id, turn) => {
     if (!turn || typeof turn.id !== "string" || ![...terminal, "inProgress"].includes(turn.status))
@@ -57,8 +62,10 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
     const saved = get(id);
     if (saved.turn_id && saved.turn_id !== turn.id) throw new Error("Runtime returned a different turn");
     for (const item of turn.items ?? []) saveItem(id, item);
-    const result = turn.status === "completed"
-      ? db.prepare("SELECT text FROM codex_runtime_outputs WHERE attempt_id=? ORDER BY rowid").all(id).map(item => item.text).join("\n") : null;
+    const outputs = db.prepare("SELECT text,phase FROM codex_runtime_outputs WHERE attempt_id=? ORDER BY rowid").all(id);
+    const final = outputs.some(item => item.phase === "final_answer")
+      ? outputs.filter(item => item.phase === "final_answer") : outputs.filter(item => item.phase === null);
+    const result = turn.status === "completed" ? final.map(item => item.text).join("\n") : null;
     db.prepare("UPDATE codex_runtime_attempts SET turn_id=?,state=?,result=? WHERE id=?")
       .run(turn.id, saved.state === "stopping" && turn.status === "inProgress" ? "stopping" : turn.status, result, id);
     return { status: get(id).state, ...(result === null ? {} : { body: result }) };
@@ -105,7 +112,12 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
   const execute = async (input, { binding } = {}) => {
     const id = await checked(binding, "start");
     if (get(id)) throw new Error("Runtime attempt already exists; reconcile instead of rerunning");
-    const envelope = createHostEnvelope(Object.fromEntries(Object.entries(input).filter(([key]) => key !== "signal")));
+    const cleanInput = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "signal"));
+    if (binding.kind === "shared-assistant" && (input.run?.id !== binding.runId || !Array.isArray(input.inputs)))
+      throw new Error("Shared runtime input does not match its run");
+    const envelope = binding.kind === "shared-assistant"
+      ? { version: 1, kind: "project-room-shared-assistant", context: { trust: "untrusted-room-data", ...structuredClone(cleanInput) } }
+      : createHostEnvelope(cleanInput);
     await ready(); input.signal?.throwIfAborted();
     db.prepare("INSERT INTO codex_runtime_attempts(id,binding,state) VALUES(?,?,'starting')").run(id, JSON.stringify(binding));
     const started = await rpc.request("thread/start", { cwd, ...selectedPolicy });
@@ -128,7 +140,7 @@ export function createCodexRuntimeHost({ db, rpc, scope, authorize, cwd, policy,
           if (result.status === "completed") finish({ body: result.body });
           else fail(new Error(`Runtime turn ${result.status}`));
         } else if (event.method === "item/completed") saveItem(id, params.item);
-        else if (event.method === "item/agentMessage/delta") emit({ type: "answer_delta", requestId: binding.requestId,
+        else if (event.method === "item/agentMessage/delta") emit({ type: "answer_delta", requestId: binding.requestId ?? binding.runId,
           attemptId: binding.attemptId, itemId: params.itemId, delta: params.delta });
       } catch (error) { fail(error); }
     };
