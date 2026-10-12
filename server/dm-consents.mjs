@@ -117,9 +117,11 @@ export class DmConsents {
   // Consent rows bypass store.command(), so this module appends its own
   // thin receipt event (dm.consent_changed) through the store's side-table
   // append rail, in the caller's transaction. A throw rolls the consent row
-  // change back with the event. Only new/restarted pending states and
-  // decisions append: a pending re-ask with an updated reason is a refresh
-  // of the same outreach, not new state, so it does not log again.
+  // change back with the event. New/restarted pending states, decisions,
+  // revokes, blocks and unblocks append: a pending re-ask with an updated
+  // reason is a refresh of the same outreach, not new state, so it does not
+  // log again. Revoke/block/unblock append because live refresh on the other
+  // participant's screen is driven by these receipts.
   _appendPairEvent(roomId, actorId, requesterId, targetId, status, reason = "") {
     this.store.appendSideTableEvent(roomId, {
       id: randomUUID(),
@@ -221,6 +223,9 @@ export class DmConsents {
       this.db.prepare(
         "UPDATE dm_consents SET status='revoked', decided_at=? WHERE room_id=? AND status='approved' AND ((requester_id=? AND target_id=?) OR (requester_id=? AND target_id=?))"
       ).run(nowMs(), roomId, memberId, otherId, otherId, memberId);
+      for (const row of live) {
+        this._appendPairEvent(roomId, memberId, row.requester_id, row.target_id, "revoked");
+      }
       return rowToPair(this._get(roomId, live[0].requester_id, live[0].target_id));
     });
   }
@@ -237,6 +242,7 @@ export class DmConsents {
       this.db.prepare(
         "UPDATE dm_consents SET status='rejected', decided_at=? WHERE room_id=? AND requester_id=? AND target_id=?"
       ).run(nowMs(), roomId, requesterId, targetId);
+      this._appendPairEvent(roomId, targetId, requesterId, targetId, "rejected");
       return rowToPair(this._get(roomId, requesterId, targetId));
     });
   }
@@ -261,10 +267,12 @@ export class DmConsents {
         this.db.prepare(
           "UPDATE dm_consents SET status='blocked', decided_at=? WHERE room_id=? AND requester_id=? AND target_id=?"
         ).run(at, roomId, blockedId, blockerId);
+        this._appendPairEvent(roomId, blockerId, blockedId, blockerId, "blocked");
       } else {
         this.db.prepare(
           "INSERT INTO dm_consents (room_id, requester_id, target_id, status, reason, created_at, decided_at) VALUES (?,?,?,'blocked','',?,?)"
         ).run(roomId, blockedId, blockerId, at, at);
+        this._appendPairEvent(roomId, blockerId, blockedId, blockerId, "blocked");
       }
       return rowToPair(this._get(roomId, blockedId, blockerId));
     });
