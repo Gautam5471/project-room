@@ -365,13 +365,85 @@ test('the open-at-newest pin never marks messages read by itself; a reader scrol
     await page.waitForTimeout(300);
     assert.deepEqual(reads, [], `${viewport.width}px: the pin keeping the newest message in view posts no read horizon`);
     // A reader who scrolls up and back down to the newest message marks it read.
-    await page.evaluate(() => { document.querySelector('#message-list').scrollTop = 0; });
+    const listBox = await page.locator('#message-list').boundingBox();
+    await page.mouse.move(listBox.x + listBox.width / 2, listBox.y + Math.min(listBox.height, viewport.height - listBox.y) / 2);
+    await page.mouse.wheel(0, -100000);
     await page.waitForTimeout(100);
-    await page.evaluate(() => { const list = document.querySelector('#message-list'); list.scrollTop = list.scrollHeight; });
+    await page.mouse.wheel(0, 100000);
     await page.waitForTimeout(100);
     await page.clock.fastForward(3000);
     for (let waited = 0; !reads.length && waited < 3000; waited += 100) await page.waitForTimeout(100);
     assert.equal(reads.length, 1, `${viewport.width}px: scrolling back to the newest message marks it read`);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+});
+
+test('Mark unread survives a reload: layout scrolls never mark read; a reader wheel still does', { timeout: 90000 }, async t => {
+  // r115 on prod 24ddb13d: after Mark unread and a reload, the app's own layout
+  // scrolls (the list growing as chrome settles) reached the list's scroll
+  // handler "at bottom" and posted /read-horizon 2.5-2.9 s after load with no
+  // wheel, touch, pointer or key input, wiping the unread mark.
+  const directory = mkdtempSync(join(tmpdir(), 'project-room-unread-reload-'));
+  const store = new RoomStore(join(directory, 'room.sqlite'));
+  const createdAt = Date.now() - 3_600_000;
+  const messages = [];
+  for (let index = 1; index <= 40; index++) {
+    messages.push(event({ roomId: 'commons', actorId: 'owner', type: T.MESSAGE_POSTED, at: new Date(createdAt + index * 1000).toISOString(),
+      data: { messageId: `unread-reload-${String(index).padStart(3, '0')}`, body: `short ${index}` } }));
+  }
+  store.initialize([...initialRoom('commons', 'owner'), ...messages]);
+  const ownerKey = store.issueAccessKey('commons', 'owner');
+  const server = createRoomServer({ store, streamInterval: 50 });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const browser = await chromium.launch({ headless: true, ...(process.env.ROOM_TEST_CHROMIUM_PATH ? { executablePath: process.env.ROOM_TEST_CHROMIUM_PATH } : {}) });
+  t.after(async () => {
+    await browser.close(); server.closeStreams(); server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    store.close(); rmSync(directory, { recursive: true, force: true });
+  });
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 }]) {
+    const mobile = viewport.width < 500, latest = `unread-reload-${viewport.width}`;
+    store.command(ownerKey, 'commons', { id: latest, type: 'message.posted', data: { messageId: latest, body: `newest at ${viewport.width}` } });
+    const context = await browser.newContext({ viewport, isMobile: mobile, hasTouch: mobile });
+    const page = await context.newPage(); page.setDefaultTimeout(15000);
+    const errors = []; page.on('pageerror', error => errors.push(error.message));
+    const reads = []; page.on('request', request => { if (request.method() !== 'GET' && request.url().endsWith('/read-horizon')) reads.push(request.url()); });
+    await page.goto(`http://127.0.0.1:${server.address().port}`);
+    await signInFixture(page, ownerKey);
+    const newest = page.locator(`[data-message-record-id="${latest}"]`);
+    await newest.locator('.message-body').waitFor({ state: 'attached' });
+    await newest.locator('.message-more > summary').click();
+    await newest.locator('[data-message-action="mark-unread"]').click();
+    await newest.locator('.chat-divider.unread').waitFor({ state: 'attached' });
+    for (let waited = 0; !reads.length && waited < 3000; waited += 100) await page.waitForTimeout(100);
+    await page.waitForTimeout(3000);
+    assert.equal(reads.length, 1, `${viewport.width}px: Mark unread writes the read horizon once and nothing undoes it without a reader scroll`);
+    const readUrl = reads[0], lastRead = () => page.evaluate(async url => (await (await fetch(url)).json()).lastReadMessageId, readUrl);
+    reads.length = 0;
+    await page.reload();
+    await newest.locator('.message-body').waitFor({ state: 'attached' });
+    // The app's own layout settles: chrome mounts above the list, then goes
+    // away, and the list's scroll position moves with no reader input.
+    await page.evaluate(() => {
+      const late = document.createElement('div'); late.style.height = '220px'; late.dataset.lateChrome = '';
+      document.querySelector('#message-list').before(late);
+    });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => document.querySelector('[data-late-chrome]')?.remove());
+    await page.waitForTimeout(4000);
+    assert.deepEqual(reads, [], `${viewport.width}px: no read horizon is posted after a reload with no reader input`);
+    assert.notEqual(await lastRead(), latest, `${viewport.width}px: the message is still unread`);
+    // A reader who scrolls up and back down to the newest message marks it read.
+    const box = await page.locator('#message-list').boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height, viewport.height - box.y) / 2);
+    await page.mouse.wheel(0, -2000);
+    await page.waitForTimeout(200);
+    await page.mouse.wheel(0, 6000);
+    for (let waited = 0; !reads.length && waited < 5000; waited += 100) await page.waitForTimeout(100);
+    assert.equal(reads.length, 1, `${viewport.width}px: a reader scroll back to the newest message marks it read`);
+    for (let waited = 0; await lastRead() !== latest && waited < 3000; waited += 200) await page.waitForTimeout(200);
+    assert.equal(await lastRead(), latest);
     assert.deepEqual(errors, []);
     await context.close();
   }
