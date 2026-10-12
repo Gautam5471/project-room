@@ -1236,7 +1236,7 @@ summary { overflow-wrap: anywhere; }
 /* Issue #6 B2: pinned messages (chip styling consolidated above with .pinned-chip). */
 .pinned-panel { margin: 0 1rem .25rem; padding: 0 .75rem; border: 1px solid var(--line-soft); border-radius: .75rem; background: rgb(255 255 255 / 2%); }
 .pinned-panel > .section-summary { min-height: 40px; }
-.pinned-list { list-style: none; margin: 0; padding: 0 0 .6rem; display: grid; gap: .5rem; }
+.pinned-list { list-style: none; margin: 0; padding: 0 0 .6rem; display: grid; gap: .5rem; max-height: min(30dvh, 16rem); overflow-y: auto; overscroll-behavior: contain; }
 .pinned-item { display: grid; grid-template-columns: 1fr auto; gap: .1rem .75rem; padding: .5rem .6rem; border: 1px solid var(--line-soft); border-radius: .6rem; }
 .pinned-item .pinned-link { grid-column: 1; font-size: .78rem; }
 .pinned-item .pinned-body { grid-column: 1; margin: 0; color: #dfe5ed; font-size: .9rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
