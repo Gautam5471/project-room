@@ -1,6 +1,7 @@
 import { publicJoinInviteHref } from "./room-deep-link.js";
 import { parseShareInviteCode } from "./share-invite-code.js";
 import { canInviteMembers } from "./events.js";
+import { stashPendingJoin, clearPendingJoin } from "./invite-context.js";
 
 // Kept in this module so the browser asset list does not need a new file.
 export function inviteMessage(title) {
@@ -181,6 +182,13 @@ export function installShareLinks({ client, accountClient, getState, getSession,
     } finally { button.disabled = false; }
   }
   const shareLinksPendingFragment = () => `#join/${joinSecret}${joinFocus ? `/${joinFocus.kind}/${encodeURIComponent(joinFocus.id)}` : ""}`;
+  // R70-1: a plain reload before sign-up drops the #join/ fragment, because
+  // consumeJoinFragment strips it from the address bar at boot. Mirror the
+  // live join link into sessionStorage while the Join dialog holds it, so the
+  // existing one-shot restore (takeRestoredJoin) re-opens the dialog after the
+  // reload. Cleared when the dialog settles (see the close handler), so a
+  // completed, dismissed or superseded join cannot resurrect from the mirror.
+  const mirrorJoin = () => { if (joinSecret) stashPendingJoin(window.sessionStorage, shareLinksPendingFragment()); };
   async function applyAccountDefaults(version) {
     let session;
     try { session = accountClient.currentSession("joining this room", { authenticated: true }); } catch { return; }
@@ -594,7 +602,7 @@ export function installShareLinks({ client, accountClient, getState, getSession,
     const uncertain = readUncertainJoin();
     const resume = !fragment.reviewSession && uncertain && uncertain.linkToken === fragment.token ? uncertain : null;
     if (resume) redemptionId = resume.redemptionId;
-    onAccountSignin(null);
+    onAccountSignin(null); mirrorJoin();
     $("#join-account-choices").hidden = true; $("#join-account-auth").hidden = true;
     $("#join-link-form").reset(); $("#join-link-form").hidden = true;
     $("#shared-agent-details").hidden = true; $("#shared-agent-details").open = false; $("#shared-agent-instructions").value = "";
@@ -712,7 +720,7 @@ export function installShareLinks({ client, accountClient, getState, getSession,
   $("#join-link-name").addEventListener("invalid", () => joinStatus("Enter the name to show in this room."));
   $("#join-account-back").addEventListener("click", () => {
     if (joining || !canLeaveAccountSignin()) return;
-    onAccountSignin(null); $("#join-account-auth").hidden = true;
+    onAccountSignin(null); mirrorJoin(); $("#join-account-auth").hidden = true;
     $("#join-account-choices").hidden = true; $("#join-link-form").hidden = false;
     $("#join-link-name").focus();
   });
@@ -830,6 +838,9 @@ export function installShareLinks({ client, accountClient, getState, getSession,
   joinDialog.addEventListener("cancel", event => { if (joining || !canLeaveAccountSignin()) event.preventDefault(); });
   joinDialog.addEventListener("close", () => {
     onAccountSignin(null);
+    // R70-1: the dialog settled (joined, dismissed or superseded); drop the
+    // reload mirror so the stale link cannot re-open on a later reload.
+    clearPendingJoin(window.sessionStorage);
     joinVersion++;
     const pendingToken = joinSecret, pendingFocus = joinFocus, attempted = joinAttempted, landed = joinLanded, roomTitle = previewRoomTitle;
     joinSecret = null; redemptionId = null; joined = null; joinFocus = null; previewRoomId = null; previewRoomTitle = null;
