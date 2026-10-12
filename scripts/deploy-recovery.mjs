@@ -117,8 +117,37 @@ export function parseDeploymentStatus(text) {
   if (start < 0) throw new Error('wrangler deployments status printed no JSON object');
   try { return JSON.parse(text.slice(start)); } catch { throw new Error('wrangler deployments status printed unparseable JSON'); }
 }
-export const deploymentStatus = (name, run = command, retry = {}) => withApiRetry(
-  async () => parseDeploymentStatus(run(['pnpm', 'exec', 'wrangler', 'deployments', 'status', ...(name === 'prod' ? ['--env', 'production'] : []), '--json'], 'cloudflare')), retry);
+// Fallback when wrangler keeps rejecting the deployments response: read the same
+// endpoint wrangler reads (GET .../workers/scripts/<name>/deployments, newest
+// first, wrangler takes deployments[0]) with the CI token and parse it strictly.
+// The result has the shape `wrangler deployments status --json` prints.
+const workerScriptName = (name, config = JSON.parse(readFileSync('cloudflare/wrangler.jsonc', 'utf8'))) => {
+  const script = name === 'prod' ? config?.env?.production?.name : config?.name;
+  if (typeof script !== 'string' || !/^[A-Za-z0-9_-]+$/.test(script)) throw new Error(`no Worker script name for ${name} in cloudflare/wrangler.jsonc`);
+  return script;
+};
+export async function restDeploymentStatus(name, { env = process.env, fetcher = fetch, config } = {}) {
+  const token = env.CLOUDFLARE_API_TOKEN, account = env.CLOUDFLARE_ACCOUNT_ID;
+  if (!token || !/^[0-9a-f]{32}$/i.test(account ?? '')) throw new Error('REST deployment fallback needs CLOUDFLARE_API_TOKEN and a 32-hex CLOUDFLARE_ACCOUNT_ID');
+  const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${workerScriptName(name, config)}/deployments`, { redirect: 'error', headers: { authorization: `Bearer ${token}`, accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+  if (response.status !== 200) throw new Error(`Cloudflare deployments REST HTTP ${response.status}`);
+  let body;
+  try { body = JSON.parse(await response.text()); } catch { throw new Error('Cloudflare deployments REST returned unparseable JSON'); }
+  const latest = body?.success === true && Array.isArray(body?.result?.deployments) ? body.result.deployments[0] : null;
+  if (!latest || !Array.isArray(latest.versions)) throw new Error('Cloudflare deployments REST reported no usable latest deployment');
+  const total = latest.versions.reduce((sum, row) => sum + Number(row?.percentage), 0);
+  if (latest.versions.some(row => typeof row?.version_id !== 'string') || total !== 100) throw new Error('Cloudflare deployments REST latest deployment does not allocate exactly 100%');
+  return latest;
+}
+export async function deploymentStatus(name, run = command, retry = {}, rest = restDeploymentStatus) {
+  try {
+    return await withApiRetry(async () => parseDeploymentStatus(run(['pnpm', 'exec', 'wrangler', 'deployments', 'status', ...(name === 'prod' ? ['--env', 'production'] : []), '--json'], 'cloudflare')), retry);
+  } catch (failure) {
+    if (!/malformed response from the API/i.test(failure?.message ?? '')) throw failure;
+    (retry.log ?? console.error)('wrangler cannot parse the deployments response; reading it over the REST API instead');
+    return rest(name);
+  }
+}
 async function main() {
   const [mode, path, output] = process.argv.slice(2);
   if (mode === 'snapshot') {
