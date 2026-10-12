@@ -30,6 +30,8 @@
 // for store.mjs to apply. Local ServiceError avoids the store.mjs import
 // cycle (Workers-bundle-safe).
 import { enforceAutonomyTierForAction } from "./autonomy-tiers.mjs";
+import { randomUUID } from "node:crypto";
+import { EVENT_TYPES as T } from "../src/events.js";
 
 class ServiceError extends Error {
   constructor(status, code, message, headers = null) { super(message); this.status = status; this.code = code; this.headers = headers; }
@@ -111,6 +113,25 @@ export class DmConsents {
     return memberId === state?.room?.ownerId;
   }
 
+  // ---- pair receipt ------------------------------------------------------
+  // Consent rows bypass store.command(), so this module appends its own
+  // thin receipt event (dm.consent_changed) through the store's side-table
+  // append rail, in the caller's transaction. A throw rolls the consent row
+  // change back with the event. Only new/restarted pending states and
+  // decisions append: a pending re-ask with an updated reason is a refresh
+  // of the same outreach, not new state, so it does not log again.
+  _appendPairEvent(roomId, actorId, requesterId, targetId, status, reason = "") {
+    this.store.appendSideTableEvent(roomId, {
+      id: randomUUID(),
+      idempotencyKey: randomUUID(),
+      roomId,
+      type: T.DM_CONSENT_CHANGED,
+      actorId,
+      at: new Date(nowMs()).toISOString(),
+      data: { requesterId, targetId, status }
+    });
+  }
+
   // ---- request ----------------------------------------------------------
   // requesterId asks targetId for DM consent with an optional reason.
   // Idempotent-ish: a live pending/approved row is returned as-is (409 for
@@ -151,12 +172,14 @@ export class DmConsents {
         this.db.prepare(
           "UPDATE dm_consents SET status='pending', reason=?, created_at=?, decided_at=NULL WHERE room_id=? AND requester_id=? AND target_id=?"
         ).run(cleanReason, nowMs(), roomId, requesterId, targetId);
+        this._appendPairEvent(roomId, requesterId, requesterId, targetId, "pending", cleanReason);
         return rowToPair(this._get(roomId, requesterId, targetId));
       }
       const at = nowMs();
       this.db.prepare(
         "INSERT INTO dm_consents (room_id, requester_id, target_id, status, reason, created_at, decided_at) VALUES (?,?,?,?,?,?,NULL)"
       ).run(roomId, requesterId, targetId, "pending", cleanReason, at);
+      this._appendPairEvent(roomId, requesterId, requesterId, targetId, "pending", cleanReason);
       return rowToPair(this._get(roomId, requesterId, targetId));
     });
   }
@@ -175,6 +198,7 @@ export class DmConsents {
       this.db.prepare(
         "UPDATE dm_consents SET status=?, decided_at=? WHERE room_id=? AND requester_id=? AND target_id=?"
       ).run(status, nowMs(), roomId, requesterId, targetId);
+      this._appendPairEvent(roomId, targetId, requesterId, targetId, status);
       return rowToPair(this._get(roomId, requesterId, targetId));
     });
   }
