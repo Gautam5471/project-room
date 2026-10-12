@@ -1319,7 +1319,7 @@
       }
     },
     "webhook_subscribe": {
-      "inputSchema": "d42510147570364d",
+      "inputSchema": "a4311d75365d3fa1",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
@@ -2308,7 +2308,7 @@
       }
     },
     "webhook_subscribe": {
-      "inputSchema": "d42510147570364d",
+      "inputSchema": "a4311d75365d3fa1",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
