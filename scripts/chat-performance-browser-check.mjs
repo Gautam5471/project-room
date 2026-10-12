@@ -318,3 +318,61 @@ test('a long room opens at its newest message on a phone, and older history fill
     await context.close();
   }
 });
+
+test('the open-at-newest pin never marks messages read by itself; a reader scroll still does', { timeout: 90000 }, async t => {
+  // #2815 CI (calm-return mobile): after a layout change took the list off the
+  // bottom, the pin's ResizeObserver put it back and a read-horizon advance
+  // that was already pending then posted with no reader scroll. Without the
+  // pin that advance finds the list off the bottom and does nothing.
+  const directory = mkdtempSync(join(tmpdir(), 'project-room-pin-read-'));
+  const store = new RoomStore(join(directory, 'room.sqlite'));
+  const createdAt = Date.now() - 3_600_000;
+  const messages = [];
+  for (let index = 1; index <= 120; index++) {
+    messages.push(event({ roomId: 'commons', actorId: 'owner', type: T.MESSAGE_POSTED, at: new Date(createdAt + index * 1000).toISOString(),
+      data: { messageId: `pin-read-${String(index).padStart(3, '0')}`, body: `short ${index}` } }));
+  }
+  store.initialize([...initialRoom('commons', 'owner'), ...messages]);
+  const ownerKey = store.issueAccessKey('commons', 'owner');
+  const server = createRoomServer({ store, streamInterval: 50 });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const browser = await chromium.launch({ headless: true, ...(process.env.ROOM_TEST_CHROMIUM_PATH ? { executablePath: process.env.ROOM_TEST_CHROMIUM_PATH } : {}) });
+  t.after(async () => {
+    await browser.close(); server.closeStreams(); server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    store.close(); rmSync(directory, { recursive: true, force: true });
+  });
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 }]) {
+    const mobile = viewport.width < 500, latest = `pin-read-${viewport.width}`;
+    // A newest message the owner has not read yet in this pass.
+    store.command(ownerKey, 'commons', { id: latest, type: 'message.posted', data: { messageId: latest, body: `newest at ${viewport.width}` } });
+    const context = await browser.newContext({ viewport, isMobile: mobile, hasTouch: mobile });
+    const page = await context.newPage(); page.setDefaultTimeout(15000);
+    const errors = []; page.on('pageerror', error => errors.push(error.message));
+    const reads = []; page.on('request', request => { if (request.method() !== 'GET' && request.url().endsWith('/read-horizon')) reads.push(request.url()); });
+    await page.clock.install(); // the read-horizon debounce only runs when the test says so
+    await page.goto(`http://127.0.0.1:${server.address().port}`);
+    await signInFixture(page, ownerKey);
+    await page.locator(`[data-message-record-id="${latest}"] .message-body`).waitFor({ state: 'attached' });
+    await page.waitForTimeout(500);
+    // Chrome mounts above the timeline and shrinks it by 220px.
+    await page.evaluate(() => {
+      const late = document.createElement('div'); late.style.height = '220px'; late.dataset.lateChrome = '';
+      document.querySelector('#message-list').before(late);
+    });
+    await page.waitForTimeout(300);
+    await page.clock.fastForward(3000);
+    await page.waitForTimeout(300);
+    assert.deepEqual(reads, [], `${viewport.width}px: the pin keeping the newest message in view posts no read horizon`);
+    // A reader who scrolls up and back down to the newest message marks it read.
+    await page.evaluate(() => { document.querySelector('#message-list').scrollTop = 0; });
+    await page.waitForTimeout(100);
+    await page.evaluate(() => { const list = document.querySelector('#message-list'); list.scrollTop = list.scrollHeight; });
+    await page.waitForTimeout(100);
+    await page.clock.fastForward(3000);
+    for (let waited = 0; !reads.length && waited < 3000; waited += 100) await page.waitForTimeout(100);
+    assert.equal(reads.length, 1, `${viewport.width}px: scrolling back to the newest message marks it read`);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+});
