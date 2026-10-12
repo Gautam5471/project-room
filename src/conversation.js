@@ -596,3 +596,29 @@ export function windowToInclude(messages, id, current = TIMELINE_WINDOW, page = 
   const needed = messages.length - index;
   return needed > current ? Math.ceil(needed / page) * page : current;
 }
+
+// R68-1: keep a timeline that opened (or was brought) to its newest message
+// there while the layout around it settles, and tell real arrivals from
+// older history filling in above them.
+
+// The pin holds while nobody has scrolled since it was set: scrollTop is the
+// value the pin saw, or the list is still flush with its bottom (a taller list
+// clamps scrollTop without anyone scrolling). A list that only got shorter, or
+// whose content grew, keeps its pin, so the next layout or render can re-stick.
+export function createTimelinePin() {
+  let pin = null;
+  const flush = list => list.scrollHeight - list.scrollTop - list.clientHeight <= 1;
+  return {
+    set(view, list) { pin = { view, top: list.scrollTop }; },
+    holds(view, list) { return Boolean(pin && pin.view === view && (list.scrollTop === pin.top || flush(list))); },
+    clear() { pin = null; },
+  };
+}
+
+// Messages after the newest one already on screen. Older history rendered in
+// above it is not news, so it never counts toward "N new messages".
+export function arrivalsAfterShown(messages, isShown) {
+  let last = -1;
+  messages.forEach((message, index) => { if (isShown(message)) last = index; });
+  return messages.slice(last + 1).filter(message => !isShown(message));
+}
