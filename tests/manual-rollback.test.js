@@ -22,13 +22,14 @@ const stamp = (revision, schema) => `var SOURCE_REVISION = "${revision}";\nvar S
 const moduleVersion = (id, source) => ({ id, main_module: 'room.js', modules: [{ name: 'room.js', content_type: 'application/javascript+module', content_base64: Buffer.from(source).toString('base64') }] });
 const check = () => ({ result: 'passed', evidence: 'https://github.com/Uuriko/project-room/actions/runs/123/attempts/1' });
 
-async function fixture(t, { currentSchema = 38, targetSchema = 38, withoutEntry = false } = {}) {
+async function fixture(t, { currentSchema = 38, targetSchema = 38, withoutEntry = false, restFallback = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'manual-rollback-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   for (const name of ['server', 'cloudflare', 'bin']) mkdirSync(join(dir, name));
   // Keep command source local to the fixture but execute the actual repository
   // helper and actual workflow shell; every external operation is a strict fake.
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ type: 'commonjs' }));
+  writeFileSync(join(dir, 'cloudflare/wrangler.jsonc'), JSON.stringify({ name: 'project-room-staging', env: { production: { name: 'project-room' } } }));
   const git = async args => (await exec('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd: dir })).stdout.trim();
   await git(['init', '--quiet']);
   writeFileSync(join(dir, 'server/writer-fence.mjs'), `export const STORE_SCHEMA_VERSION = ${targetSchema};\n`);
@@ -45,7 +46,7 @@ async function fixture(t, { currentSchema = 38, targetSchema = 38, withoutEntry 
   const state = { current: { prod: allocation(prodCurrent), entry: allocation(entryCurrent) },
     signals: { prod: { status: 'ok', servedBy: 'worker', sourceRevision: currentSha }, entry: { status: 'ok', servedBy: 'worker', sourceRevision: currentSha } },
     targets: { prod: moduleVersion(prodTarget, stamp(oldSha, targetSchema)), entry: moduleVersion(entryTarget, stamp(oldSha, targetSchema)) },
-    rolled: [], statusCalls: {} };
+    rolled: [], statusCalls: {}, restFallback };
   const save = () => writeFileSync(join(dir, 'state.json'), JSON.stringify(state));
   save();
   const commitEvidence = async () => { writeFileSync(join(dir, 'qualification.json'), JSON.stringify(evidence)); await git(['add', 'qualification.json']); await git(['commit', '--quiet', '--allow-empty', '-m', 'qualification']); };
@@ -57,6 +58,7 @@ const is=expected=>JSON.stringify(a)===JSON.stringify(expected);
 fs.appendFileSync(process.env.COMMAND_LOG,JSON.stringify(a)+'\\n');
 if(is(['exec','wrangler','whoami','--json'])) { console.log(JSON.stringify({loggedIn:true,accounts:[{id:'${account}'}]})); process.exit(0); }
 if(is(['exec','wrangler','deployments','status',...(name==='prod'?['--env','production']:[]),'--json'])) {
+  if(s.restFallback) { console.error('Received a malformed response from the API'); process.exit(1); }
   s.statusCalls[name]=(s.statusCalls[name]??0)+1;
   if(s.race && name===s.race.name && s.statusCalls[name]>=s.race.after) s.current[name]={versions:[{version_id:'${another}',percentage:100}]};
   fs.writeFileSync(p,JSON.stringify(s)); console.log(JSON.stringify(s.current[name])); process.exit(0);
@@ -68,6 +70,10 @@ if(is(['exec','wrangler','rollback',id,...(name==='prod'?['--env','production']:
 console.error('Unexpected command'); process.exit(98);
 `, { mode: 0o755 });
   writeFileSync(join(dir, 'network.mjs'), `import {readFileSync,appendFileSync} from 'node:fs';
+// Accelerate only the known retry backoffs in this isolated fixture. Their
+// attempt count and real doubling schedule have coverage in deploy-checks.
+const realTimeout=globalThis.setTimeout;
+globalThis.setTimeout=(callback,delay,...args)=>realTimeout(callback,[2000,4000,8000,16000].includes(delay)?0:delay,...args);
 globalThis.fetch=async(url,options={})=>{
   const s=JSON.parse(readFileSync(process.env.FIXTURE_STATE));
   appendFileSync(process.env.FETCH_LOG,String(url)+'\\n');
@@ -75,6 +81,9 @@ globalThis.fetch=async(url,options={})=>{
   const u=new URL(url);
   if(u.hostname==='api.cloudflare.com') {
     if(options.redirect!=='error'||options.headers.authorization!=='Bearer synthetic-token') throw new Error('Unsafe version read');
+    const deploymentPaths={prod:'/client/v4/accounts/${account}/workers/scripts/project-room/deployments',entry:'/client/v4/accounts/${account}/workers/scripts/project-room-staging/deployments'};
+    const deployment=Object.keys(deploymentPaths).find(name=>u.pathname===deploymentPaths[name]);
+    if(deployment && !u.search && s.restFallback) return Response.json({success:true,result:{deployments:[s.current[deployment]]}});
     const match=u.pathname.match(/^\\/client\\/v4\\/accounts\\/${account}\\/workers\\/workers\\/(project-room|project-room-staging)\\/versions\\/([a-f0-9-]+)$/);
     if(!match||u.search!=='?include=modules') throw new Error('Unexpected Cloudflare request');
     const name=match[1]==='project-room'?'prod':'entry';
@@ -186,6 +195,28 @@ for (const withoutEntry of [false, true]) test(`qualified exact-pair workflow re
   result = await f.execute();
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(f.rolled(), withoutEntry ? ['prod'] : ['prod', 'entry']);
+});
+
+test('qualified manual workflow retains REST fallback after exhausted Wrangler reads', async t => {
+  const f = await fixture(t, { restFallback: true });
+  const preflight = await f.preflight();
+  assert.equal(preflight.code, 0, preflight.stderr);
+  assert.deepEqual(f.rolled(), [], 'REST fallback admission remains read-only');
+  const result = await f.execute();
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(f.rolled(), ['prod', 'entry']);
+});
+
+for (const duplicate of [false, true]) test(`manual workflow rejects malformed REST fallback allocation (duplicate=${duplicate})`, async t => {
+  const f = await fixture(t, { restFallback: true });
+  if (duplicate) f.state.current.prod.versions.push({ version_id: prodCurrent, percentage: 0 });
+  else f.state.current.prod.versions[0].percentage = '100';
+  f.save();
+  const result = await f.attempt();
+  assert.equal(result.code, 1, result.stderr);
+  assert.match(result.stderr, /exact stable allocation unknown/);
+  assert.deepEqual(f.rolled(), []);
+  assert.doesNotMatch(f.commands(), /"rollback"/);
 });
 
 for (const name of ['prod', 'entry']) test(`allocation changed on ${name} after preflight blocks both mutations`, async t => {
