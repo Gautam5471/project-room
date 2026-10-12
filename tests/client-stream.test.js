@@ -195,3 +195,23 @@ test('a failed follow-up read on an open stream is retried without replacing the
   assert.equal(client.sequence, 8);
   assert.match(statuses.at(-1), /^Connected/);
 });
+
+test('a dm.consent_changed stream receipt fires onConsentChange; other receipts do not', async t => {
+  const { client, streams, emit } = fixture(t);
+  const fires = [];
+  client.onConsentChange = () => fires.push(1);
+  client.connect();
+  await emit('open', 1);
+  client.fetcher = async () => followUpSnapshot(client, 8);
+  streams[0].dispatchEvent(new MessageEvent('room-event', {
+    data: JSON.stringify({ sequence: 8, event: { type: 'dm.consent_changed', roomId: 'commons' } }),
+  }));
+  await client.flight.promise.catch(() => {});
+  assert.equal(fires.length, 1, 'the consent receipt fires the hook');
+  client.fetcher = async () => followUpSnapshot(client, 9);
+  streams[0].dispatchEvent(new MessageEvent('room-event', {
+    data: JSON.stringify({ sequence: 9, event: { type: 'message.posted', roomId: 'commons' } }),
+  }));
+  await client.flight.promise.catch(() => {});
+  assert.equal(fires.length, 1, 'other receipts leave the hook alone');
+});
