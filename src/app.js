@@ -2223,7 +2223,12 @@ function renderChannels() {
       ? `<button type="button" class="icon-button channel-manage" data-channel-manage="${esc(c.id)}" aria-label="Channel settings, ${esc(c.name)}" title="Channel settings">⋯</button>` : "";
     return `<li class="channel-row"><button type="button" class="channel${active ? " is-active" : ""}" data-channel="${esc(c.id)}"${active ? ' aria-current="page"' : ""}><span aria-hidden="true">#</span><span class="channel-name">${esc(c.name)}</span></button>${manage}</li>`;
   }).join("");
-  if (list._html !== html) { list.innerHTML = html; list._html = html; }
+  if (list._html === html) return;
+  // The rebuild replaces the focused button; keep keyboard and screen-reader
+  // users on the channel they just picked.
+  const focused = list.contains(document.activeElement) ? document.activeElement.dataset.channel ?? null : null;
+  list.innerHTML = html; list._html = html;
+  if (focused) list.querySelector(`[data-channel="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
 }
 // One-tap replies and a task nudge under the latest message in view
 // (src/chat-suggestions.js). Plain chat stays the default; structure is one tap away.
@@ -2741,13 +2746,19 @@ function mentionsFilterOn() {
 function pinnedFilterOn() {
   return $("#search-pinned")?.getAttribute("aria-pressed") === "true";
 }
+// On a phone the results panel steps aside once a result opens, so the
+// conversation gets the screen; editing the query or focusing the field
+// brings it back with the same results.
+let searchCollapsed = false;
+const narrowSearch = matchMedia("(max-width: 40rem)");
 function renderSearch(now = Date.now()) {
   const query = $("#message-search").value;
   const parsed = parseSearchQuery(query);
   const only = mentionsFilterOn() || parsed.mentionsOnly, pinnedOnly = pinnedFilterOn();
   const active = Boolean(query.trim()) || only || pinnedOnly;
   $("#clear-search").hidden = !query && !mentionsFilterOn() && !pinnedOnly;
-  $("#search-results").hidden = !active;
+  if (!active) searchCollapsed = false;
+  $("#search-results").hidden = !active || searchCollapsed;
   if (!active) { $("#search-list").replaceChildren(); $("#search-list")._content = null; $("#search-count").textContent = ""; return; }
   const result = searchMessages(state, query, 50, { viewer: session?.member, mentionsOnly: mentionsFilterOn(), pinnedOnly });
   const work = only || pinnedOnly ? { work: [], total: 0 } : searchWork(state, parsed.term || query);
@@ -4148,7 +4159,15 @@ $("#channel-list").addEventListener("click", e => {
   const manage = e.target.closest("[data-channel-manage]");
   if (manage) { e.stopPropagation(); openChannelDialog("manage", manage.dataset.channelManage); return; }
   const button = e.target.closest("[data-channel]");
-  if (button) setActiveChannel(button.dataset.channel);
+  if (!button) return;
+  setActiveChannel(button.dataset.channel);
+  // On a phone the drawer closes once this click finishes dispatching (the
+  // document listener below) and takes the button with it: land on the
+  // channel heading instead of <body>.
+  setTimeout(() => {
+    const at = document.activeElement;
+    if (!at || at === document.body || !at.checkVisibility?.()) $("#conversation-title").focus({ preventScroll: true });
+  }, 0);
 });
 $("#channel-form").addEventListener("submit", async e => {
   e.preventDefault();
@@ -4755,15 +4774,16 @@ document.addEventListener("keydown", event => {
   }
 });
 $("#search-form").addEventListener("submit", e => { e.preventDefault(); if (state) renderSearch(); });
-$("#message-search").addEventListener("input", () => { if (state) renderSearch(); });
+$("#message-search").addEventListener("input", () => { searchCollapsed = false; if (state) renderSearch(); });
+$("#message-search").addEventListener("focus", () => { if (!searchCollapsed) return; searchCollapsed = false; if (state) renderSearch(); });
 $("#search-mentions").addEventListener("click", () => {
   const on = mentionsFilterOn();
-  $("#search-mentions").setAttribute("aria-pressed", on ? "false" : "true");
+  $("#search-mentions").setAttribute("aria-pressed", on ? "false" : "true"); searchCollapsed = false;
   if (state) renderSearch();
 });
 $("#search-pinned").addEventListener("click", () => {
   const on = pinnedFilterOn();
-  $("#search-pinned").setAttribute("aria-pressed", on ? "false" : "true");
+  $("#search-pinned").setAttribute("aria-pressed", on ? "false" : "true"); searchCollapsed = false;
   if (state) renderSearch();
 });
 $("#clear-search").addEventListener("click", () => {
@@ -5055,6 +5075,7 @@ $("#main").addEventListener("click", e => {
   if (!link.dataset.openWork) { updatesUi?.cancelPending(); activeWorkNavigation = null; workNavigationEpoch++; $("#work-navigation-return").hidden = true; }
   // JDOT-COH-NAV end
   if (link.dataset.openMessage) {
+    if (narrowSearch.matches && link.closest("#search-results")) { searchCollapsed = true; $("#search-results").hidden = true; }
     history.replaceState(null, "", recordHref("message", link.dataset.openMessage));
     revealMessage(link.dataset.openMessage);
   } else if (link.dataset.openWork) {

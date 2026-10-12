@@ -39,6 +39,7 @@
     "scripts/claim-overlap-browser-check.mjs": 1428,
     "scripts/composer-browser-check.mjs": 9885,
     "scripts/composer-live-files-browser-check.mjs": 9000,
+    "scripts/narrow-navigation-browser-check.mjs": 9000,
     "scripts/connect-agent-first-screen-check.mjs": 1176,
     "scripts/contribution-journey-check.mjs": 4321,
     "scripts/credit-question-browser-check.mjs": 5316,

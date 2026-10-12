@@ -741,7 +741,11 @@ button:disabled { cursor: wait; opacity: .6; }
 .new-messages-button { display: block; align-self: center; max-width: calc(100% - 2rem); margin: .35rem 1rem; padding: .45rem 1rem; border: 1px solid #66668b; border-radius: 99px; color: var(--text); background: #37374e; font-size: .8rem; }
 .count-chip { padding-inline: .6rem; white-space: nowrap; }
 @media (max-width: 500px) {
-  .thread-bar { flex-direction: column; align-items: stretch; gap: .5rem; }
+  /* One row: Back, the title and Mute, so a thread keeps room for its replies. */
+  .thread-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .5rem; padding: .4rem .75rem; }
+  .thread-bar h3 { margin: 0; font-size: var(--text-md); }
+  .thread-bar p { font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thread-bar button { min-height: 44px; padding-inline: .6rem; }
   .conversation-header { flex-wrap: wrap; }
 }
 
