@@ -1343,12 +1343,34 @@ function findEditableMessage(state, incoming, { evidence = "refuse" } = {}) {
   return { message, actor };
 }
 
+// Edit history is bounded. Each edit used to append the previous body with no
+// cap, so enough edits of a long message pushed the room projection into the
+// 4 MiB pilot cap and refused every later write in the room (muse-room 12457
+// item 3, evidence 12458). Keep the most recent EDIT_HISTORY_MAX_ENTRIES prior
+// versions, each body capped at EDIT_HISTORY_MAX_BODY_CHARS, dropping the
+// oldest first; the newest entry is always kept so an edit is still marked.
+const EDIT_HISTORY_MAX_ENTRIES = 25;
+const EDIT_HISTORY_MAX_BODY_CHARS = 20000;
+// One message's history may never hold more than a 128th of the 4 MiB room
+// projection, so even the cap's ceiling cannot crowd out the room's writes.
+const EDIT_HISTORY_MAX_TOTAL_CHARS = 32768;
+
+function appendEditHistory(history, entry) {
+  const size = (e) => (typeof e.body === "string" ? e.body.length : 0) + 64;
+  const trimmed = typeof entry.body === "string" && entry.body.length > EDIT_HISTORY_MAX_BODY_CHARS
+    ? { ...entry, body: entry.body.slice(0, EDIT_HISTORY_MAX_BODY_CHARS) }
+    : entry;
+  let prior = [...(history ?? []), trimmed];
+  while (prior.length > 1 && (prior.length > EDIT_HISTORY_MAX_ENTRIES || prior.reduce((sum, e) => sum + size(e), 0) > EDIT_HISTORY_MAX_TOTAL_CHARS)) prior = prior.slice(1);
+  return prior;
+}
+
 function editMessage(state, incoming) {
   const { message } = findEditableMessage(state, incoming);
   // --- PRIV-1 message redaction ---
   if (!isRedactedBody(incoming.data) && (typeof incoming.data.body !== "string" || !incoming.data.body.trim())) throw new Error("Message body must be text");
   // --- end PRIV-1 message redaction ---
-  message.editHistory = [...(message.editHistory ?? []), { body: message.body, editedAt: incoming.at }];
+  message.editHistory = appendEditHistory(message.editHistory, { body: message.body, editedAt: incoming.at });
   message.body = incoming.data.body;
   message.revision = (message.revision ?? 0) + 1;
   message.editedAt = incoming.at;
