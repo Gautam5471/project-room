@@ -1,3 +1,5 @@
+import { uiText } from "./strings.js";
+
 // Composer file chips. Bytes go to the room file routes, which call the same
 // room_attachments store the MCP file tools use (stage, then commit onto the
 // message the member just posted). The password and the file bytes never
@@ -48,4 +50,20 @@ export function composerAudienceNote(members, to) {
 export function composerAudiencePickerVisible({ members, selfId, requestMode } = {}) {
   if (requestMode) return true;
   return (members || []).some(member => member && member.active !== false && member.id !== selfId);
+}
+
+// Upload refusals the server words for operators ('extension ".exe" is
+// blocked for security') get plain copy in the composer.
+export function attachFailureCopy(error) {
+  if (error?.code === "file_too_large") return "That file is larger than 1 MB.";
+  if (error?.code === "blocked_extension") return uiText("file.attach.blockedType");
+  return error?.message || uiText("file.attach.failed");
+}
+
+// Files commit onto a message after it posts, and the commit appends no room
+// event, so another member's client reads the file list again shortly after
+// their message arrives, then once more to cover a slow commit.
+export const ROOM_FILE_REFRESH_DELAYS_MS = Object.freeze([1200, 5000]);
+export function arrivalsNeedFileRefresh(newMessages, selfId) {
+  return (newMessages || []).some(message => message && message.authorId !== selfId);
 }

@@ -996,6 +996,7 @@
   "tests/agent-first-run-fallback.test.js": 82,
   "tests/agent-signin-ui.test.js": 94,
   "tests/composer-file-chip.test.js": 83,
+  "tests/composer-files-live.test.js": 83,
   "tests/contribution-public.test.js": 103,
   "tests/cursor-guards.test.js": 96,
   "tests/emoji-catalog.test.js": 94,
