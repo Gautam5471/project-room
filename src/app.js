@@ -5001,9 +5001,25 @@ new MutationObserver(() => { if (roomActionsContext && !ownsRoomActions()) close
 new MutationObserver(() => { if (resultView && $("#main").hidden) closeResult(false); })
   .observe($("#main"), { attributes: true, attributeFilter: ["hidden"] });
 // Attention: advancing the read horizon is scroll-driven (debounced). Both the
-// message list and the window can be the scroller depending on layout.
+// message list and the window can be the scroller depending on layout. Only a
+// reader's scroll counts: one that follows wheel, touch, a scroll key or a
+// pointer on the list's own scrollbar. The app's layout and programmatic
+// scrolls (chrome settling, menus closing, the pin) never mark anything read,
+// so Mark unread survives a reload. A reader scroll keeps the window open
+// while it runs, which covers touch momentum.
+const READER_SCROLL_MS = 1000;
+let readerScrollAt = -Infinity;
+const readerScrolling = () => performance.now() - readerScrollAt < READER_SCROLL_MS;
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+const noteReaderScroll = () => { readerScrollAt = performance.now(); };
+addEventListener("wheel", noteReaderScroll, { capture: true, passive: true });
+addEventListener("touchmove", noteReaderScroll, { capture: true, passive: true });
+addEventListener("keydown", event => { if (SCROLL_KEYS.has(event.key) && !event.target?.closest?.("input, textarea, select, [contenteditable]")) noteReaderScroll(); }, { capture: true });
+$("#message-list").addEventListener("pointerdown", event => { if (event.target === event.currentTarget) noteReaderScroll(); }, { passive: true });
 for (const scroller of [$("#message-list"), window]) {
   scroller.addEventListener("scroll", () => {
+    if (!readerScrolling()) return;
+    noteReaderScroll();
     if (scroller !== window && pinScrollTop !== null) {
       const pinned = $("#message-list").scrollTop === pinScrollTop; pinScrollTop = null;
       if (pinned) return;
