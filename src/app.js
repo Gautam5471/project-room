@@ -37,7 +37,7 @@ import { stashPendingInvite, clearPendingInvite, takeRestoredInvite, stashPendin
 import { selectedRoomFromLocation as roomFromLocation, roomIdFromHash, roomIdFromNext, ROOM_ACCESS_NOTICE } from "./room-deep-link.js";
 import { installAgentInvites } from "./agent-invite-ui.js";
 import { rememberLastRoom, rememberAccountHint, readLastRoom, readAccountHint, hasSessionHint, clearBrowserSessionHints, rememberMemberRoom, readMemberRoom, clearStoredPasswords, signInRoomTarget } from "./browser-session.js";
-import { attachmentFromBytes, composerAudienceNote, composerAudiencePickerVisible, COMPOSER_FILE_BYTES, fileChipLabel } from "./composer-files.js";
+import { arrivalsNeedFileRefresh, attachFailureCopy, attachmentFromBytes, composerAudienceNote, composerAudiencePickerVisible, COMPOSER_FILE_BYTES, fileChipLabel, ROOM_FILE_REFRESH_DELAYS_MS } from "./composer-files.js";
 import { formatSessionExpiry } from "./session-expiry.js";
 import { handoffEnvelopeListHtml, envelopesForWork } from "./handoff-envelope-ui.js";
 import { installHumanPush } from "./human-push.js";
@@ -1278,6 +1278,14 @@ function setFormStatus(status, text, error = false) {
   status.classList.toggle("error", Boolean(text) && error);
 }
 function composerOverLimit() { return $("#message-input").value.length > MAX_MESSAGE_BODY_CHARS; }
+// The composer grows with its text up to the CSS max-height (25dvh), then scrolls.
+function autosizeComposer() {
+  const input = $("#message-input");
+  if (!input) return;
+  input.style.height = "auto";
+  if (input.value) input.style.height = `${input.scrollHeight + input.offsetHeight - input.clientHeight}px`;
+  else input.style.removeProperty("height");
+}
 function renderComposerLength() {
   const input = $("#message-input"), over = composerOverLimit();
   const limit = new Intl.NumberFormat("en-US").format(MAX_MESSAGE_BODY_CHARS);
@@ -2338,6 +2346,7 @@ function renderMessages() {
   const pendingOutgoingId = pendingMessage?.command?.data?.messageId || pendingMessage?.command?.id;
   const announceCount = newMessages.filter(message => message.id !== pendingOutgoingId && !locallyOwnedMessageIds.has(message.id) && !isMutedBy(state, session?.member?.id, message.authorId)).length;
   newMessages.forEach(message => locallyOwnedMessageIds.delete(message.id));
+  if (arrivalsNeedFileRefresh(newMessages, session?.member?.id)) scheduleRoomFilesRefresh();
   $("#thread-bar").hidden = !currentThreadId;
   syncThreadMuteButton();
   syncAlsoSend();
@@ -2640,6 +2649,13 @@ function renderComposerFiles() {
     host.append(chip);
   }
 }
+// Files commit onto a message after it posts and append no room event, so
+// another member's message triggers a couple of debounced file-list reads.
+let roomFilesRefreshTimers = [];
+function scheduleRoomFilesRefresh() {
+  roomFilesRefreshTimers.forEach(clearTimeout);
+  roomFilesRefreshTimers = ROOM_FILE_REFRESH_DELAYS_MS.map(delay => setTimeout(() => void refreshRoomFiles(), delay));
+}
 async function refreshRoomFiles() {
   if (!state || !session || !client.session) return;
   const generation = client.generation;
@@ -2678,7 +2694,7 @@ async function attachComposerFiles(fileList) {
     } catch (error) {
       const current = composerFiles.find(item => item.id === id);
       if (current) current.status = "error";
-      setComposerError(error?.code === "file_too_large" ? "That file is larger than 1 MB." : (error?.message || "Couldn’t attach that file."));
+      setComposerError(attachFailureCopy(error));
     }
     renderComposerFiles();
   }
@@ -2762,6 +2778,7 @@ function restoreComposer(draft) {
   }
   select.value = draft.toMemberId; replyToId = draft.replyToId; pendingMessage = draft.pending;
   syncComposerChrome();
+  autosizeComposer();
 }
 function requestRunLabel(id) {
   const run = requestRuns[id];
@@ -4062,7 +4079,7 @@ $("#message-form").addEventListener("submit", e => {
     await commitComposerFiles(data.messageId);
     if (generation !== client.generation || !state) return;
     drafts.clear(draftKey);
-    $("#message-input").value = ""; pendingMessage = null; clearReply();
+    $("#message-input").value = ""; pendingMessage = null; clearReply(); autosizeComposer();
     $("#also-send-to-channel").checked = false;
     persistDrafts();
     if (assistantDraft) {
@@ -4464,7 +4481,7 @@ function applyMentionMember(member) {
   hideMentions(); saveComposer(); syncRequestComposer();
   input.focus(); input.setSelectionRange(next.caret, next.caret);
 }
-$("#message-input").addEventListener("input", () => { lastComposerSelection = null; saveComposer(); renderMentions(); renderEmoji(); updateReply(); syncRequestComposer(); void client.sendTyping({ toMemberId: $("#message-to-select").value }); });
+$("#message-input").addEventListener("input", () => { autosizeComposer(); lastComposerSelection = null; saveComposer(); renderMentions(); renderEmoji(); updateReply(); syncRequestComposer(); void client.sendTyping({ toMemberId: $("#message-to-select").value }); });
 $("#message-to-select").addEventListener("change", () => { saveComposer(); syncRequestComposer(); syncComposerChrome(); });
 const touchKeyboard = matchMedia("(hover: none) and (pointer: coarse)");
 function syncComposerHint() {
