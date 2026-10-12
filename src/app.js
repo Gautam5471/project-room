@@ -328,6 +328,7 @@ const timelineWindow = new Map();
 let timelineRevealing = false;
 const viewPositions = new Map(), pendingReactions = new Map(), pendingPins = new Set(), locallyOwnedMessageIds = new Set();
 const timelinePin = createTimelinePin();
+let pinScrollTop = null; // where the pin last moved the list; that scroll event is not the reader's
 let newVisibleMessages = 0, unreadAnchorId = null, mentionIndex = 0, emojiIndex = 0;
 let mutedThreads = new Set(), threadMuteBusy = false;
 let roomCursor = 0, catchUpBoundary = 0, roomGeneration = -1, showAllAttention = false, returnClock = null;
@@ -2302,8 +2303,9 @@ function renderMessages() {
   const previous = new Map([...list.children].map(e => [e.dataset.key, e]));
   const pageScroll = list.scrollHeight <= list.clientHeight;
   const listTop = Math.max(0, list.getBoundingClientRect().top);
-  const nearBottom = pageScroll ? list.getBoundingClientRect().bottom <= innerHeight + 80
-    : timelinePin.holds(view, list) || list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const listNearBottom = !pageScroll && list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const pinOnly = !pageScroll && !listNearBottom && timelinePin.holds(view, list); // at the newest only by the pin
+  const nearBottom = pageScroll ? list.getBoundingClientRect().bottom <= innerHeight + 80 : pinOnly || listNearBottom;
   const anchor = [...list.children].find(e => {
     if (e.hasAttribute("data-claim-update") || e.dataset.key === TIMELINE_PAGER_KEY) return false; // removed and repainted below
     const bounds = e.getBoundingClientRect();
@@ -2470,7 +2472,11 @@ function renderMessages() {
   if (!sameView) {
     list.scrollTop = viewPositions.get(view) ?? list.scrollHeight; newVisibleMessages = 0;
     if (viewPositions.has(view)) timelinePin.clear(); else timelinePin.set(view, list);
-  } else if ((nearBottom || ownArrival) && !focused) { list.scrollTop = list.scrollHeight; newVisibleMessages = 0; timelinePin.set(view, list); }
+  } else if ((nearBottom || ownArrival) && !focused) {
+    if (pinOnly && !ownArrival) { stickPinnedTimeline(list); if (newCount > 0) scheduleHorizonAdvance(); }
+    else { list.scrollTop = list.scrollHeight; timelinePin.set(view, list); }
+    newVisibleMessages = 0;
+  }
   else {
     if (!pageScroll && anchor?.isConnected) list.scrollTop += anchor.getBoundingClientRect().top - anchorOffset;
     newVisibleMessages += newCount;
@@ -4997,7 +5003,13 @@ new MutationObserver(() => { if (resultView && $("#main").hidden) closeResult(fa
 // Attention: advancing the read horizon is scroll-driven (debounced). Both the
 // message list and the window can be the scroller depending on layout.
 for (const scroller of [$("#message-list"), window]) {
-  scroller.addEventListener("scroll", () => { if (nearBottomOfList()) scheduleHorizonAdvance(); }, { passive: true });
+  scroller.addEventListener("scroll", () => {
+    if (scroller !== window && pinScrollTop !== null) {
+      const pinned = $("#message-list").scrollTop === pinScrollTop; pinScrollTop = null;
+      if (pinned) return;
+    }
+    if (nearBottomOfList()) scheduleHorizonAdvance();
+  }, { passive: true });
 }
 $("#main").addEventListener("click", e => {
   const link = e.target.closest("[data-open-message], [data-open-work], [data-open-member], [data-open-event], [data-open-room]");
@@ -5237,9 +5249,19 @@ $("#reaction-sheet-options").addEventListener("click", e => {
 // newest message (assistant panel, pill, composer) keeps it there (R68-1).
 if (globalThis.ResizeObserver) new ResizeObserver(() => {
   const list = $("#message-list");
-  if (!timelinePin.holds(list.dataset.view, list)) return;
-  list.scrollTop = list.scrollHeight; timelinePin.set(list.dataset.view, list);
+  if (timelinePin.holds(list.dataset.view, list)) stickPinnedTimeline(list);
 }).observe($("#message-list"));
+// The pin moving the list is not the reader scrolling, so it never marks
+// anything read: its scroll event is skipped, and where the move hid a layout
+// change that took the list off the bottom, a pending read-horizon advance is
+// dropped as it would have been without the pin.
+function stickPinnedTimeline(list) {
+  const before = list.scrollTop, offBottom = list.scrollHeight - before - list.clientHeight >= 80;
+  list.scrollTop = list.scrollHeight; timelinePin.set(list.dataset.view, list);
+  if (list.scrollTop === before) return;
+  pinScrollTop = list.scrollTop;
+  if (offBottom) { clearTimeout(horizonAdvanceTimer); horizonAdvanceTimer = null; }
+}
 // Long-press (touch/pen): hold a message to open the reaction sheet.
 $("#message-list").addEventListener("pointerdown", e => {
   if (e.pointerType === "mouse" || e.button !== 0) return;
