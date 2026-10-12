@@ -767,6 +767,7 @@
   "tests/session-fixation.test.js": 44613,
   "tests/share-invite-code.test.js": 13187,
   "tests/share-link-referrals.test.js": 11109,
+  "tests/share-link-rejoin.test.js": 1132,
   "tests/share-link-ui.test.js": 4045,
   "tests/share-links.test.js": 208911,
   "tests/shared-procedures.test.js": 4214,
