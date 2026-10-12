@@ -103,10 +103,7 @@ export async function createInboxCollaborationJourney({ mobile = false } = {}) {
     const shared = state().messages.find(m => m.body.includes(source.paragraphs[0]));
     assert.ok(shared); assert.equal(shared.body.includes("ORCHID-482"), false);
     // Per-message actions live in the "⋯" overflow menu (UI calming #2).
-    const sharedRow = page.locator(`[data-message-record-id="${shared.id}"]`);
-    const sharedMenu = sharedRow.locator('details.message-more');
-    if (!(await sharedMenu.evaluate(node => node.open))) await sharedMenu.locator('summary').click();
-    await page.locator(`[data-message-id="${shared.id}"][data-message-action="work"]`).click();
+    await messageAction(page, shared.id, "work");
     await page.locator("#work-title-input").fill("A warm invitation reply");
     await page.locator("#work-done-input").fill("A warm reply of at most 60 words, based only on the shared excerpt, with one small next step and no invented claims. Keep it as a draft; do not send.");
     await page.locator("#assignee-select").selectOption("owner"); await page.locator("#verifier-select").selectOption("mail-reviewer");
@@ -118,6 +115,23 @@ export async function createInboxCollaborationJourney({ mobile = false } = {}) {
     await action(page, "help"); await page.locator("#action-fields [name=scope]").fill("Draft one warm reply under 60 words from the shared excerpt. Keep the draft here; I will review it. No external actions.");
     await page.locator("#action-fields [name=duration]").selectOption("3600000"); await submit(page); await capture("03-help-invitation");
 
+    // The timeline re-renders while messages arrive, which can replace the row or
+    // close its "⋯" menu between opening it and clicking the action. Wait for the
+    // row, then reopen and click again with short per-attempt timeouts.
+    async function messageAction(p, id, action) {
+      const row = p.locator(`[data-message-record-id="${id}"]`);
+      const target = p.locator(`[data-message-id="${id}"][data-message-action="${action}"]`);
+      await row.waitFor({ state: "attached", timeout: 30000 });
+      for (let attempt = 1; ; attempt++) {
+        try {
+          const menu = row.locator("details.message-more");
+          if (!(await menu.evaluate(node => node.open, null, { timeout: 3000 }))) await menu.locator("summary").click({ timeout: 3000 });
+          await target.click({ timeout: 3000 });
+          return;
+        } catch (failure) { if (attempt >= 5) throw failure; }
+      }
+    }
+
     async function stage(name, input = {}) {
       if (name === "select") {
         const offer = state().helpOffers[input.offerId]; assert.equal(offer?.offererId, helperId);
@@ -128,10 +142,7 @@ export async function createInboxCollaborationJourney({ mobile = false } = {}) {
         const draft = state().messages.find(m => m.id === input.messageId);
         assert.equal(draft?.authorId, helperId); assert.equal(draft?.body, input.expectedBody);
         // Per-message actions live in the "⋯" overflow menu (UI calming #2).
-        const draftRow = page.locator(`[data-message-record-id="${input.messageId}"]`);
-        const draftMenu = draftRow.locator('details.message-more');
-        if (!(await draftMenu.evaluate(node => node.open))) await draftMenu.locator('summary').click();
-        await page.locator(`[data-message-id="${input.messageId}"][data-message-action="result"]`).click();
+        await messageAction(page, input.messageId, "result");
         await page.waitForFunction(body => document.querySelector("#action-text-body").textContent === body, input.expectedBody);
         await page.locator("#action-fields [name=producerId]").selectOption(helperId);
         await page.locator("#action-fields [name=summary]").fill("A warm invitation reply");
