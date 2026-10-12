@@ -6641,7 +6641,7 @@ let notificationNote = "", notificationBefore = null, notificationLoading = fals
 // DM consent pairs for the signed-in member (PR #731).
 // Refreshed on room open, when the People panel opens, and after every
 // consent action. Never loaded for the public read-only face.
-let dmConsents = [], dmConsentBusy = false, dmConsentSeq = 0;
+let dmConsents = [], dmConsentBusy = false, dmConsentSeq = 0, dmConsentDirty = false;
 let friendBonds = [], friendBusy = false, friendSeq = 0, friendDmPeerId = null;
 // #660: server-derived presence states per member (memberId -> presence API
 // entry). Refreshed on room open and on an interval while visible; the rail
@@ -7174,28 +7174,33 @@ function stopPresencePoll() {
 // messages sections and the composer's DM recipient hint. Load failures stay
 // silent (a stale list is worse than none); every action reports loudly.
 async function refreshDmConsents() {
-  if (!state || !session || $("#main").hidden || dmConsentBusy) return;
-  const seq = ++dmConsentSeq, generation = client.generation, room = state;
+  // A consent change landing while a refresh is busy must not be lost: mark
+  // it dirty and let the busy window's owner refetch once more.
+  if (!state || !session || $("#main").hidden || dmConsentBusy) { if (dmConsentBusy) dmConsentDirty = true; return; }
+  // Consent state is room-scoped and lives outside the projection, so a
+  // same-room snapshot replacing the state object must not discard a fetch.
+  const seq = ++dmConsentSeq, generation = client.generation;
   dmConsentBusy = true;
   try {
     const result = await fetchDmConsents(client);
-    if (seq !== dmConsentSeq || generation !== client.generation || state !== room) return;
+    if (seq !== dmConsentSeq || generation !== client.generation) return;
     dmConsents = Array.isArray(result) ? result : [];
   } catch {
     // A failed refresh keeps the last known list: wiping it would flash the
     // whole People panel back to "no consent" while the failed action
     // already reported loudly through the notice banner.
-    if (seq !== dmConsentSeq || generation !== client.generation || state !== room) return;
+    if (seq !== dmConsentSeq || generation !== client.generation) return;
   } finally {
     dmConsentBusy = false;
-    if (seq === dmConsentSeq && generation === client.generation && state === room) render();
+    if (dmConsentDirty && seq === dmConsentSeq && generation === client.generation) { dmConsentDirty = false; await refreshDmConsents(); return; }
+    if (seq === dmConsentSeq && generation === client.generation) render();
   }
 }
 async function runDmConsentAction(action, peerId, button) {
   if (!state || !session || dmConsentBusy) return;
   const peer = state.members[peerId];
   if (!peer || peer.active === false) return;
-  const seq = ++dmConsentSeq, generation = client.generation, room = state;
+  const seq = ++dmConsentSeq, generation = client.generation;
   dmConsentBusy = true;
   if (button) button.disabled = true;
   try {
@@ -7214,7 +7219,7 @@ async function runDmConsentAction(action, peerId, button) {
     else if (action === "unblock") await unblockDmMember(client, peerId);
     else if (action === "revoke") await revokeDmConsent(client, peerId);
     else return;
-    if (seq !== dmConsentSeq || generation !== client.generation || state !== room) return;
+    if (seq !== dmConsentSeq || generation !== client.generation) return;
     notice(action === "request" ? `DM request sent to ${peer.displayName}.`
       : action === "approve" ? `${peer.displayName} can now message you directly.`
       : action === "reject" ? `Declined ${peer.displayName}'s DM request.`
@@ -7222,14 +7227,14 @@ async function runDmConsentAction(action, peerId, button) {
       : action === "unblock" ? `${peer.displayName} unblocked — they can send a DM request again.`
       : `DM consent with ${peer.displayName} revoked.`);
   } catch (error) {
-    if (seq === dmConsentSeq && generation === client.generation && state === room) notice(dmConsentFailureMessage(error, peer.displayName), true);
+    if (seq === dmConsentSeq && generation === client.generation) notice(dmConsentFailureMessage(error, peer.displayName), true);
   } finally {
     dmConsentBusy = false;
     // Re-enable the clicked button: a failed action leaves the consent list
     // unchanged, so the post-action render skips the DOM (identical HTML) and
     // would otherwise leave the button dead until an unrelated re-render.
     if (button) button.disabled = false;
-    if (seq === dmConsentSeq && generation === client.generation && state === room) await refreshDmConsents();
+    if (seq === dmConsentSeq && generation === client.generation) { dmConsentDirty = false; await refreshDmConsents(); }
   }
 }
 // ---- Friend / Bond ------------------------------------------------------------
