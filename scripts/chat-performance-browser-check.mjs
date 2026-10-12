@@ -267,3 +267,54 @@ test('typing in the composer leaves unchanged reply text untouched', { timeout: 
   assert.match(await page.locator('#reply-mention').textContent(), /^Also @ /);
   assert.deepEqual(errors, []);
 });
+
+test('a long room opens at its newest message on a phone, and older history filling in is not counted as new', { timeout: 90000 }, async t => {
+  // R68-1: at 390px the open landed 125-196 px above the bottom and the
+  // history fill that followed showed "N new messages" for old messages.
+  const directory = mkdtempSync(join(tmpdir(), 'project-room-long-open-'));
+  const store = new RoomStore(join(directory, 'room.sqlite'));
+  const createdAt = Date.now() - 3_600_000;
+  const messages = [];
+  for (let index = 1; index <= 600; index++) {
+    messages.push(event({ roomId: 'commons', actorId: 'owner', type: T.MESSAGE_POSTED, at: new Date(createdAt + index * 1000).toISOString(),
+      data: { messageId: `long-open-${String(index).padStart(3, '0')}`, body: index % 50 === 0 ? `long ${index} `.repeat(400) : `short ${index}` } }));
+  }
+  store.initialize([...initialRoom('commons', 'owner'), ...messages]);
+  const ownerKey = store.issueAccessKey('commons', 'owner');
+  const server = createRoomServer({ store, streamInterval: 50 });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const browser = await chromium.launch({ headless: true, ...(process.env.ROOM_TEST_CHROMIUM_PATH ? { executablePath: process.env.ROOM_TEST_CHROMIUM_PATH } : {}) });
+  t.after(async () => {
+    await browser.close(); server.closeStreams(); server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    store.close(); rmSync(directory, { recursive: true, force: true });
+  });
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 }]) {
+    const mobile = viewport.width < 500;
+    const context = await browser.newContext({ viewport, isMobile: mobile, hasTouch: mobile });
+    const page = await context.newPage(); page.setDefaultTimeout(15000);
+    const errors = []; page.on('pageerror', error => errors.push(error.message));
+    // Chrome above the timeline that mounts after the first paint (the room
+    // assistant panel does this on prod) shrinks the list under the reader.
+    await page.addInitScript(() => new MutationObserver((_, observer) => {
+      const list = document.querySelector('#message-list');
+      if (!list?.children.length) return;
+      observer.disconnect();
+      const late = document.createElement('div'); late.style.height = '220px'; late.dataset.lateChrome = '';
+      list.before(late);
+    }).observe(document, { childList: true, subtree: true }));
+    await page.goto(`http://127.0.0.1:${server.address().port}`);
+    await signInFixture(page, ownerKey);
+    await page.locator('[data-message-record-id="long-open-600"] .message-body').waitFor({ state: 'attached' });
+    await page.waitForFunction(() => document.querySelectorAll('#message-list > li').length > 150);
+    await page.waitForTimeout(1500);
+    const seen = await page.evaluate(() => {
+      const list = document.querySelector('#message-list'), pill = document.querySelector('#new-messages-button');
+      const last = document.querySelector('[data-message-record-id="long-open-600"]').getBoundingClientRect(), box = list.getBoundingClientRect();
+      return { gap: Math.round(list.scrollHeight - list.scrollTop - list.clientHeight), lastOnScreen: last.bottom <= Math.min(box.bottom, innerHeight) + 1 && last.top < innerHeight, pill: pill.hidden ? null : pill.textContent };
+    });
+    assert.deepEqual(seen, { gap: 0, lastOnScreen: true, pill: null }, `${viewport.width}px open lands on the newest message with no new-messages pill`);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+});
