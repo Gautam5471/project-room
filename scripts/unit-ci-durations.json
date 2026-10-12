@@ -493,6 +493,7 @@
   "tests/magic-links-http.test.js": 76320,
   "tests/magic-links.test.js": 9081,
   "tests/maintenance.test.js": 53753,
+  "tests/manual-rollback.test.js": 17351,
   "tests/matchmaking-routes.test.js": 5290,
   "tests/mcp-500-error-trace.test.js": 5589,
   "tests/mcp-bounty-escrow-errors.test.js": 34748,
