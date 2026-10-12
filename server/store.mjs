@@ -1,5 +1,5 @@
 import { invalidateEditedAssistantInput } from './room-assistant.mjs';
-import { dmEventVisibility } from "./dm-event-visibility.mjs";
+import { dmEventVisibility, dmConsentEventVisible } from "./dm-event-visibility.mjs";
 import { publicWorkClaimFenceSchema, verifyPublicWorkClaimFence } from "./public-work-claim-fence.mjs";
 import { PublicWorkClaims, publicWorkClaimsSchema } from "./public-work-claims.mjs";
 import { PublicWorkReviews, publicWorkReviewsSchema } from "./public-work-reviews.mjs";
@@ -2678,6 +2678,26 @@ this.slaBreachAlerts = new SlaBreachAlertJournal(this); // Task 26: durable in-a
     cache.insert(roomId, meta.sequence, value, Buffer.byteLength(row.projection) + (state.messages ?? []).reduce((n, m) => n + (m?.body?.length ?? 0), 0));
     return value;
   }
+  // dm-consents: consent rows live in the dm_consents side table, but the
+  // requester/target pair needs a sequenced receipt so open sessions refresh
+  // live (12542). Mirrors the invitation-accept persist block: same pilot
+  // guards, same transaction as the caller's row write, so a throw rolls the
+  // consent change back with the event. Also the MSG-2/integrity replay rail:
+  // dm.consent_changed has a reducer no-op, so checkpoints replay clean.
+  appendSideTableEvent(roomId, event) {
+    const room = this.room(roomId);
+    refuseArchivedWrite(room.state);
+    if (room.sequence >= PILOT_LIMITS.eventsPerRoom) fail(409, "pilot_limit", "Bounded pilot capacity reached; no data was changed");
+    let state;
+    try { state = compact(applyEvent(room.state, event)); }
+    catch (error) { fail(422, "invalid_side_table_event", error.message); }
+    const projection = this.storedProjection(roomId, state);
+    if (Buffer.byteLength(projection) > PILOT_LIMITS.projectionBytes) fail(409, "pilot_limit", "Room projection limit reached; no data was changed. Ask the room owner to raise the room's limit, or try again later.");
+    const sequence = room.sequence + 1;
+    this.db.prepare("INSERT INTO events VALUES(?,?,?,?)").run(roomId, sequence, event.id, JSON.stringify(event));
+    this.db.prepare("UPDATE rooms SET sequence=?,projection=? WHERE id=?").run(sequence, projection, roomId);
+    return sequence;
+  }
   // Phase 1a rollback: write every room back with full bodies in one
   // transaction. The release trigger then empties projection_bodies.
   rehydrateAllProjections() {
@@ -4429,6 +4449,7 @@ this.slaBreachAlerts = new SlaBreachAlertJournal(this); // Task 26: durable in-a
       // projection only decodes if the page actually holds a follow-up event.
       const dmVisible = dmEventVisibility(viewerId, () => this.room(roomId).state.messages, events);
       const visible = events.filter(row => rowInHistory(row, floor, floorMessages) && dmVisible(row.event)
+        && dmConsentEventVisible(row.event, viewerId, isOwner)
         && peerEventVisible(row.event, { memberId: viewerId, identityId, isOwner }));
       // #658: mention chips ride on message views. One batched query for
       // the whole page (no N+1); only members who can read the room see it.
@@ -4606,6 +4627,7 @@ this.slaBreachAlerts = new SlaBreachAlertJournal(this); // Task 26: durable in-a
       const floorMessages = floor ? indexHistoryMessages(room.state.messages) : null;
       const dmVisible = dmEventVisibility(auth.member.id, room.state.messages, brief.history.items); // SEC-19
       brief.history.items = brief.history.items.filter(row => rowInHistory(row, floor, floorMessages) && dmVisible(row.event)
+        && dmConsentEventVisible(row.event, auth.member.id, isOwner)
         && peerEventVisible(row.event, { memberId: auth.member.id, identityId, isOwner }));
       return { roomId, viewerId: auth.member.id, viewerAccountId: auth.account?.id ?? null, viewerAuthEpoch: auth.account?.authEpoch ?? null, viewerSessionBinding: auth.sessionBinding, viewerSessionRevision: auth.sessionRevision ?? null, ...brief };
     });
