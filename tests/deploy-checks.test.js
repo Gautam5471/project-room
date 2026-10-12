@@ -410,7 +410,7 @@ test("CLI --write refuses missing assets and rejects conflicting flags", async t
 });
 
 // Actual deployment recovery owner: no live credentials or writes in fixtures.
-import { rollbackDecision, recoverWorkers, recoveryDescription, observeWorker, schemaAt } from "../scripts/deploy-recovery.mjs";
+import { rollbackDecision, recoverWorkers, recoveryDescription, observeWorker, schemaAt, withApiRetry, transientApiFailure, deploymentStatus, parseDeploymentStatus } from "../scripts/deploy-recovery.mjs";
 import { parse as parseYaml } from "yaml";
 const recoveryOld = "11111111-1111-4111-8111-111111111111";
 const recoveryNew = "22222222-2222-4222-8222-222222222222";
@@ -563,4 +563,43 @@ const fs=require('node:fs'),a=process.argv.slice(2);fs.appendFileSync(process.en
   assert.equal(report.workers.entry.disposition, "unchanged");
   assert.ok(requests.every(path => path.endsWith("/api/version/worker")), "predeployment probes must never instantiate room storage");
   assert.ok(!readFileSync(log, "utf8").includes('"rollback"'));
+});
+
+// Cloudflare sometimes answers a read with HTTP 200 and a body wrangler cannot
+// parse. That read is retried with backoff; every other failure stays fail-closed.
+const malformed = () => new Error("pnpm exec wrangler deployments status --env production --json failed (1)\nstderr: Received a malformed response from the API");
+const noWait = { sleep: async () => {}, log: () => {} };
+
+test("a malformed Cloudflare API response is retried with doubling backoff and then succeeds", async () => {
+  const waits = []; let calls = 0;
+  const value = await withApiRetry(async () => { if (++calls < 3) throw malformed(); return "ok"; }, { ...noWait, sleep: async ms => { waits.push(ms); } });
+  assert.equal(value, "ok");
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [2000, 4000]);
+});
+
+test("API retry fails closed: exhausted attempts and non-transient errors rethrow without further tries", async () => {
+  let calls = 0;
+  await assert.rejects(withApiRetry(async () => { calls++; throw malformed(); }, { ...noWait, attempts: 4 }), /malformed response/);
+  assert.equal(calls, 4);
+  calls = 0;
+  await assert.rejects(withApiRetry(async () => { calls++; throw new Error("Cloudflare API error 10000: Authentication error"); }, noWait), /Authentication error/);
+  assert.equal(calls, 1, "an authentication error is not retried");
+  assert.equal(transientApiFailure("Cloudflare API error 10000: Authentication error"), false);
+  assert.equal(transientApiFailure("Received a malformed response from the API"), true);
+});
+
+test("deploymentStatus retries the wrangler read and still refuses output that is not a JSON object", async () => {
+  let calls = 0;
+  const run = args => {
+    calls++;
+    assert.deepEqual(args.slice(0, 5), ["pnpm", "exec", "wrangler", "deployments", "status"]);
+    if (calls === 1) throw malformed();
+    return `banner\n${JSON.stringify(recoveryAllocation(recoveryOld))}`;
+  };
+  assert.deepEqual(await deploymentStatus("prod", run, noWait), recoveryAllocation(recoveryOld));
+  assert.equal(calls, 2);
+  assert.throws(() => parseDeploymentStatus("no json here"), /no JSON object/);
+  assert.throws(() => parseDeploymentStatus("{not json"), /unparseable JSON/);
+  await assert.rejects(deploymentStatus("entry", () => "", noWait), /no JSON object/);
 });
