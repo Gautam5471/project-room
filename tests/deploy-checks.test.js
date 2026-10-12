@@ -410,7 +410,7 @@ test("CLI --write refuses missing assets and rejects conflicting flags", async t
 });
 
 // Actual deployment recovery owner: no live credentials or writes in fixtures.
-import { rollbackDecision, recoverWorkers, recoveryDescription, observeWorker, schemaAt, withApiRetry, transientApiFailure, deploymentStatus, parseDeploymentStatus } from "../scripts/deploy-recovery.mjs";
+import { rollbackDecision, recoverWorkers, recoveryDescription, observeWorker, schemaAt, withApiRetry, transientApiFailure, deploymentStatus, parseDeploymentStatus, restDeploymentStatus, allocation } from "../scripts/deploy-recovery.mjs";
 import { parse as parseYaml } from "yaml";
 const recoveryOld = "11111111-1111-4111-8111-111111111111";
 const recoveryNew = "22222222-2222-4222-8222-222222222222";
@@ -602,4 +602,45 @@ test("deploymentStatus retries the wrangler read and still refuses output that i
   assert.throws(() => parseDeploymentStatus("no json here"), /no JSON object/);
   assert.throws(() => parseDeploymentStatus("{not json"), /unparseable JSON/);
   await assert.rejects(deploymentStatus("entry", () => "", noWait), /no JSON object/);
+});
+
+// REST fallback, with a ~4KB deployments body like the one wrangler rejected.
+const restEnv = { CLOUDFLARE_API_TOKEN: "tok", CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
+const restConfig = { name: "project-room-staging", env: { production: { name: "project-room" } } };
+const restDeployment = (id, versions) => ({ id: `d-${id}`, source: "wrangler", strategy: "percentage", created_on: "2026-10-12T09:55:00Z", annotations: { "workers/triggered_by": "deployment", note: "x".repeat(150) }, versions });
+const restBody = (deployments, success = true) => JSON.stringify({ success, errors: [], messages: [], result: { deployments } });
+const restFetch = (status, text, seen = []) => async (url, init) => { seen.push({ url, init }); return { status, text: async () => text }; };
+const fourKb = Array.from({ length: 12 }, (_, i) => restDeployment(i, [{ version_id: recoveryOld, percentage: 100 }]));
+
+test("REST fallback reads the newest deployment of the right script and returns the wrangler status shape", async () => {
+  const text = restBody(fourKb);
+  assert.ok(text.length > 3900, `fixture is ${text.length} bytes`);
+  const seen = [];
+  const status = await restDeploymentStatus("prod", { env: restEnv, config: restConfig, fetcher: restFetch(200, text, seen) });
+  assert.equal(seen[0].url, "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/workers/scripts/project-room/deployments");
+  assert.equal(seen[0].init.headers.authorization, "Bearer tok");
+  assert.deepEqual(allocation(status), { known: true, versions: [{ versionId: recoveryOld, percentage: 100 }], versionId: recoveryOld });
+  await restDeploymentStatus("entry", { env: restEnv, config: restConfig, fetcher: restFetch(200, text, seen) });
+  assert.match(seen[1].url, /workers\/scripts\/project-room-staging\/deployments$/);
+});
+
+test("REST fallback fails closed on every unusable answer", async () => {
+  const good = restBody(fourKb);
+  const cases = [["HTTP 502", 502, good], ["non-JSON", 200, "<html>504</html>"], ["truncated", 200, good.slice(0, 3000)], ["success false", 200, restBody(fourKb, false)],
+    ["no deployments", 200, restBody([])], ["split allocation", 200, restBody([restDeployment(1, [{ version_id: recoveryOld, percentage: 50 }, { version_id: recoveryNew, percentage: 40 }])])],
+    ["missing version id", 200, restBody([restDeployment(1, [{ percentage: 100 }])])]];
+  for (const [label, status, text] of cases) await assert.rejects(restDeploymentStatus("prod", { env: restEnv, config: restConfig, fetcher: restFetch(status, text) }), /REST/, label);
+  await assert.rejects(restDeploymentStatus("prod", { env: { CLOUDFLARE_API_TOKEN: "tok" }, config: restConfig, fetcher: restFetch(200, good) }), /needs CLOUDFLARE_API_TOKEN/);
+});
+
+test("deploymentStatus uses REST only after wrangler keeps returning a malformed response", async () => {
+  let runs = 0, rests = 0;
+  const rest = async () => { rests++; return recoveryAllocation(recoveryOld); };
+  assert.deepEqual(await deploymentStatus("prod", () => { runs++; throw malformed(); }, { ...noWait, attempts: 3 }, rest), recoveryAllocation(recoveryOld));
+  assert.deepEqual([runs, rests], [3, 1]);
+  runs = rests = 0;
+  await assert.rejects(deploymentStatus("prod", () => { runs++; throw new Error("Authentication error"); }, noWait, rest), /Authentication/);
+  assert.deepEqual([runs, rests], [1, 0], "other failures never fall back");
+  runs = rests = 0;
+  await assert.rejects(deploymentStatus("prod", () => { runs++; throw malformed(); }, { ...noWait, attempts: 2 }, async () => { throw new Error("Cloudflare deployments REST HTTP 502"); }), /REST HTTP 502/);
 });
