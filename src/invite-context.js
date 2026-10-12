@@ -92,14 +92,17 @@ export const PENDING_JOIN_KEY = "pr-pending-join";
 
 // #join/<token or legacy code> with optional purpose focus (#join/<token>/work/<id>
 // or /message/<id>). The fragment never leaves the browser, so the raw token
-// may touch sessionStorage only for the OAuth round-trip.
+// may touch sessionStorage only while a join attempt is live: the OAuth
+// round-trip, or the Join dialog before sign-in (mirrored at open, cleared
+// when the dialog settles; see share-links.js mirrorJoin).
 function isJoinFragment(value) {
   const token = typeof value === "string" && /^#join\/([^/?#]+)(\/(work|message)\/[^/?#]+)?$/.exec(value)?.[1];
   return Boolean(token && (INVITE_SECRET_PATTERN.test(token) || normalizeShareInviteCode(token)));
 }
 
-// Mirror the join fragment at OAuth-start so the round-trip cannot drop it.
-// Called only from the OAuth entry points — never on invitation preview.
+// Mirror the join fragment so a navigation that drops it cannot lose it:
+// at OAuth-start (the round-trip never carries the fragment) and while the
+// Join dialog holds the link before sign-in. Never on invitation preview.
 export function stashPendingJoin(storage, fragment) {
   if (!storage || !isJoinFragment(fragment)) return;
   try { storage.setItem(PENDING_JOIN_KEY, fragment); } catch { /* storage unavailable */ }
