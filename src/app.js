@@ -6,7 +6,7 @@ import { EVENT_TYPES as T, MAX_MESSAGE_BODY_CHARS, WORK_STATES as S, roomPolicy,
 import { AccountClient, RoomClient, draftCommand, retryUnconfirmed } from "./client.js";
 import { ReturnBrief, groupBriefHistory } from "./return-brief.js";
 import { attentionPreview, needsAttention, workInvolvingMe, contributionSteps, searchWork, draftFeedback, completedResults, currentResult, roomOrientation } from "./work-selectors.js";
-import { menuOpensUp, TIMELINE_WINDOW, windowTimeline, windowToInclude, conversationIndex, searchMessages, ConversationDrafts, channelDraftKey, DraftRecovery, draftRecoveryScope, shouldPreserveDrafts, sendsOnEnter, escapeChatAction, messageCluster, mentionQuery, mentionMatches, createBodyHtmlCache, kindLabel, memberStatus, memberHandle, memberPresence, memberDoneChip, presenceLabel, addressMember, shouldAddressPresenceClick, messageMentionsMember, replyAuthorToAddress, composerPlaceholder, removeMention, parseSearchQuery, reactionPills } from "./conversation.js";
+import { menuOpensUp, TIMELINE_WINDOW, windowTimeline, createTimelinePin, arrivalsAfterShown, windowToInclude, conversationIndex, searchMessages, ConversationDrafts, channelDraftKey, DraftRecovery, draftRecoveryScope, shouldPreserveDrafts, sendsOnEnter, escapeChatAction, messageCluster, mentionQuery, mentionMatches, createBodyHtmlCache, kindLabel, memberStatus, memberHandle, memberPresence, memberDoneChip, presenceLabel, addressMember, shouldAddressPresenceClick, messageMentionsMember, replyAuthorToAddress, composerPlaceholder, removeMention, parseSearchQuery, reactionPills } from "./conversation.js";
 import { canonicalReaction, clipGraphemes, emojiCatalog, emojiMatches, emojiName, emojiQuery, foldedReactionMap, frequentEmoji, insertEmoji, renderEmojiShortcodes } from "./emoji.js";
 import { nextWorkStep, workStatus, workActions, renderWorkActions, activeClaim, terminalWork, doneChip, reusableWorkDefinition, confirmsWorkProposal, confirmsWorkAction, matchesReceipt, producerKnown as hasReportedProducer, changeDescription, diffResultLines, diffResultSummary, workRecipeOptions } from "./workflow.js";
 import { coordinationLoops } from "./work-loops.js";
@@ -327,6 +327,7 @@ const TIMELINE_PAGER_KEY = "pager:earlier";
 const timelineWindow = new Map();
 let timelineRevealing = false;
 const viewPositions = new Map(), pendingReactions = new Map(), pendingPins = new Set(), locallyOwnedMessageIds = new Set();
+const timelinePin = createTimelinePin();
 let newVisibleMessages = 0, unreadAnchorId = null, mentionIndex = 0, emojiIndex = 0;
 let mutedThreads = new Set(), threadMuteBusy = false;
 let roomCursor = 0, catchUpBoundary = 0, roomGeneration = -1, showAllAttention = false, returnClock = null;
@@ -2302,7 +2303,7 @@ function renderMessages() {
   const pageScroll = list.scrollHeight <= list.clientHeight;
   const listTop = Math.max(0, list.getBoundingClientRect().top);
   const nearBottom = pageScroll ? list.getBoundingClientRect().bottom <= innerHeight + 80
-    : list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    : timelinePin.holds(view, list) || list.scrollHeight - list.scrollTop - list.clientHeight < 80;
   const anchor = [...list.children].find(e => {
     if (e.hasAttribute("data-claim-update") || e.dataset.key === TIMELINE_PAGER_KEY) return false; // removed and repainted below
     const bounds = e.getBoundingClientRect();
@@ -2321,7 +2322,7 @@ function renderMessages() {
   // node is in its final place.
   const focusedKey = focused?.dataset.focusKey ?? null;
   const focusedMessage = focused?.matches(".message");
-  const newMessages = sameView && !revealing ? messages.filter(m => !previous.has(`message:${m.id}`)) : [];
+  const newMessages = sameView && !revealing ? arrivalsAfterShown(messages, m => previous.has(`message:${m.id}`)) : [];
   const newCount = newMessages.length;
   // Your own message, sent from this browser, always comes into view: it is
   // not news to you, and a "jump to latest" pill for it hides what you just said.
@@ -2466,8 +2467,10 @@ function renderMessages() {
   }
   restoreTimelineSelection(list, savedSelection);
   list.dataset.view = view;
-  if (!sameView) { list.scrollTop = viewPositions.get(view) ?? list.scrollHeight; newVisibleMessages = 0; }
-  else if ((nearBottom || ownArrival) && !focused) { list.scrollTop = list.scrollHeight; newVisibleMessages = 0; }
+  if (!sameView) {
+    list.scrollTop = viewPositions.get(view) ?? list.scrollHeight; newVisibleMessages = 0;
+    if (viewPositions.has(view)) timelinePin.clear(); else timelinePin.set(view, list);
+  } else if ((nearBottom || ownArrival) && !focused) { list.scrollTop = list.scrollHeight; newVisibleMessages = 0; timelinePin.set(view, list); }
   else {
     if (!pageScroll && anchor?.isConnected) list.scrollTop += anchor.getBoundingClientRect().top - anchorOffset;
     newVisibleMessages += newCount;
@@ -5230,6 +5233,13 @@ $("#reaction-sheet-options").addEventListener("click", e => {
   closeReactionSheet();
   setReaction(id, emoji);
 });
+// Chrome that mounts or resizes around the timeline after it opened at the
+// newest message (assistant panel, pill, composer) keeps it there (R68-1).
+if (globalThis.ResizeObserver) new ResizeObserver(() => {
+  const list = $("#message-list");
+  if (!timelinePin.holds(list.dataset.view, list)) return;
+  list.scrollTop = list.scrollHeight; timelinePin.set(list.dataset.view, list);
+}).observe($("#message-list"));
 // Long-press (touch/pen): hold a message to open the reaction sheet.
 $("#message-list").addEventListener("pointerdown", e => {
   if (e.pointerType === "mouse" || e.button !== 0) return;
