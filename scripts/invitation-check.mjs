@@ -511,7 +511,7 @@ test("a shared invitation retains its pending account signup across Escape and n
   assert.equal(await page.locator("#join-account-auth").isVisible(), true);
   await page.locator("#join-account-google").evaluate(anchor => anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
   assert.equal(new URL(page.url()).pathname, "/", "pending auth cannot start Google navigation");
-  assert.equal(await page.evaluate(() => sessionStorage.getItem("pr-pending-join")), null, "pending auth cannot stash another OAuth handoff");
+  assert.equal(await page.evaluate(() => sessionStorage.getItem("pr-pending-join")), `#join/${token}`, "pending auth keeps this dialog's own link stashed");
   const another = secret();
   await page.evaluate(value => { location.hash = `#join/${value}`; }, another);
   await page.locator("#join-link-status").filter({ hasText: "Finish signing in" }).waitFor();
