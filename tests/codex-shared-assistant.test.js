@@ -129,7 +129,10 @@ test("completed continuation recovers without rerunning either turn", async t =>
     if (context.turnNumber === 1) { await appendLate(context, "late-recovery"); context.finish("completed"); }
     else complete = context.finish;
   });
-  await assert.rejects(f.run({ timeoutMs: 60 }), /uncertain/);
+  // The budget has to cover the whole first turn (a late-input write over HTTP)
+  // even on a loaded runner, so only the held second turn is what times out.
+  await assert.rejects(f.run({ timeoutMs: 1000 }), /uncertain/);
+  assert.equal(typeof complete, "function", "the continuation turn was held open when the run timed out");
   complete("completed");
   const result = await f.run(); assert.equal(result.result.status, "done");
   assert.equal(f.calls.filter(x => x.method === "turn/start").length, 2);
