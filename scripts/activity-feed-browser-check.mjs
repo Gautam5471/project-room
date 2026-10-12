@@ -114,8 +114,12 @@ for (const mobile of [false, true]) {
     await capture("unread");
 
     // Scrolling to the bottom advances the horizon (debounced): the divider
-    // clears because everything in view now counts as read. Synthetic scroll
-    // events cover viewports where the list has no scrollable overflow.
+    // clears because everything in view now counts as read. Only a reader's
+    // scroll counts, so a real wheel comes first; synthetic scroll events then
+    // cover viewports where the list has no scrollable overflow.
+    const listBox = await page.locator("#message-list").boundingBox();
+    await page.mouse.move(listBox.x + listBox.width / 2, listBox.y + Math.min(listBox.height, page.viewportSize().height - listBox.y) / 2);
+    await page.mouse.wheel(0, 100000);
     await page.evaluate(() => {
       const list = document.querySelector("#message-list");
       if (list) { list.scrollTop = list.scrollHeight; list.dispatchEvent(new Event("scroll")); }
