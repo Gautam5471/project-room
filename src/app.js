@@ -369,6 +369,8 @@ try { recovery = new DraftRecovery(navigator.userAgent.includes("ProjectRoomMac/
 const draftScope = draftRecoveryScope;
 const client = new RoomClient({
   accountClient,
+  // Live refresh: a peer's consent decision arrives as dm.consent_changed.
+  onConsentChange: () => { void refreshDmConsents(); },
   onSnapshot(snapshot, identity) {
     const firstSnapshot = !state;
     const presenceBoundary = firstSnapshot || state.room?.id !== snapshot.state.room?.id || roomGeneration !== client.generation;
