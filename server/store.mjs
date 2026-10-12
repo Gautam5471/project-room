@@ -2362,7 +2362,12 @@ this.slaBreachAlerts = new SlaBreachAlertJournal(this); // Task 26: durable in-a
         // (account-deletion.mjs, "memberships"), so a deleted invitee has no
         // live membership to compare. The journal and projection matched above;
         // the joined event itself is still compared to the recorded invitation.
-        const retiredInvitee = !binding && this.db.prepare("SELECT active FROM accounts WHERE id=?").get(stored.intended_account_id)?.active === 0;
+        // The same holds for an invitee who left on their own and came back
+        // through a newer invitation: their old, inactive member gave up the
+        // binding, which now belongs to the new member in the same room.
+        const reboundInvitee = !binding && members[stored.intended_member_id]?.active === false
+          && Boolean(this.db.prepare("SELECT 1 FROM member_accounts WHERE room_id=? AND account_id=? AND member_id<>?").get(stored.room_id, stored.intended_account_id, stored.intended_member_id));
+        const retiredInvitee = !binding && (this.db.prepare("SELECT active FROM accounts WHERE id=?").get(stored.intended_account_id)?.active === 0 || reboundInvitee);
         assertInvitationMembershipEvidence(stored, linked, binding, { sequence, state: { members } }, { retiredInvitee });
       }
       return replayed;
@@ -3216,6 +3221,17 @@ this.slaBreachAlerts = new SlaBreachAlertJournal(this); // Task 26: durable in-a
     if (!auth.account || auth.kind !== "session") fail(403, "account_session_required", "Invitation administration requires an account browser session");
     return auth;
   }
+  // The account's retained binding to a member who LEFT on their own (the last
+  // deactivation was the member's own act). Owner-removed members are not
+  // returned: a new invitation is not a way around a removal.
+  selfLeftBinding(roomId, accountId, state) {
+    const bound = this.db.prepare("SELECT member_id FROM member_accounts WHERE room_id=? AND account_id=?").get(roomId, accountId);
+    if (!bound || state.members[bound.member_id]?.active !== false) return null;
+    const last = this.db.prepare("SELECT body FROM events WHERE room_id=? AND json_extract(body,'$.type')=? AND json_extract(body,'$.data.memberId')=? ORDER BY sequence DESC LIMIT 1")
+      .get(roomId, T.MEMBER_ACCESS_CHANGED, bound.member_id);
+    const event = last ? JSON.parse(last.body) : null;
+    return event && event.data?.active === false && event.actorId === bound.member_id ? bound.member_id : null;
+  }
   issueInvitation(accountSessionToken, roomId, details) {
     const {
       requestId, token, intendedAccountId, intendedMemberId, displayName, role, expiresAt,
@@ -3264,7 +3280,7 @@ this.slaBreachAlerts = new SlaBreachAlertJournal(this); // Task 26: durable in-a
       const targetAccount = this.account(intendedAccountId);
       if (!targetAccount.active) fail(403, "access_denied", "Invitation target account is inactive");
       if (Object.hasOwn(room.state.members, intendedMemberId)) fail(409, "membership_conflict", "That Room member already exists");
-      if (this.db.prepare("SELECT 1 FROM member_accounts WHERE room_id=? AND account_id=?").get(roomId, intendedAccountId)) fail(409, "membership_conflict", "That account already has a membership in this Room");
+      if (this.db.prepare("SELECT 1 FROM member_accounts WHERE room_id=? AND account_id=?").get(roomId, intendedAccountId) && !this.selfLeftBinding(roomId, intendedAccountId, room.state)) fail(409, "membership_conflict", "That account already has a membership in this Room");
       if (this.db.prepare(`SELECT 1 FROM membership_invitations WHERE room_id=? AND status='pending' AND expires_at>? AND (intended_member_id=? OR intended_account_id=?) LIMIT 1`)
         .get(roomId, now, intendedMemberId, intendedAccountId)) fail(409, "invitation_conflict", "An active invitation already reserves that Room identity");
       if (this.db.prepare("SELECT 1 FROM membership_invitations WHERE token_hash=?").get(tokenHash)
@@ -3458,6 +3474,11 @@ this.slaBreachAlerts = new SlaBreachAlertJournal(this); // Task 26: durable in-a
         || !(room.state.room.ownerId === row.issuer_member_id || issuerMember.permissions.includes("manage_members"))) {
         fail(409, "invitation_authority_changed", "Inviter authority changed; ask a current Room administrator for a new invitation");
       }
+      // A member who left on their own comes back through a fresh invitation as
+      // a new member identity: their old, inactive member keeps its history but
+      // gives up the account binding (one binding per account per room).
+      const leftMemberId = this.selfLeftBinding(row.room_id, row.intended_account_id, room.state);
+      if (leftMemberId) this.db.prepare("DELETE FROM member_accounts WHERE room_id=? AND member_id=? AND account_id=?").run(row.room_id, leftMemberId, row.intended_account_id);
       if (Object.hasOwn(room.state.members, row.intended_member_id)
         || this.db.prepare("SELECT 1 FROM member_accounts WHERE room_id=? AND (member_id=? OR account_id=?) LIMIT 1").get(row.room_id, row.intended_member_id, row.intended_account_id)) {
         fail(409, "membership_conflict", "Invitation target already has a Room identity");
