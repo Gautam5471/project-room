@@ -327,13 +327,13 @@ h3 { margin: .8rem 0 .45rem; font-size: 1.05rem; line-height: 1.3; letter-spacin
 /* Typing indicator: ephemeral ambient presence above the composer. */
 .typing-indicator { padding: .15rem 1.25rem; color: var(--muted); font-size: var(--text-xs); font-style: italic; }
 .typing-indicator[hidden] { display: none; }
-.composer-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px 40px; align-items: end; gap: .5rem; padding: .5rem; border: 1px solid #50515f; border-radius: .75rem; background: var(--panel-raised); }
+.composer-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px 44px; align-items: end; gap: .5rem; padding: .5rem; border: 1px solid #50515f; border-radius: .75rem; background: var(--panel-raised); }
 .composer-row:focus-within { border-color: var(--blue); }
 .composer-row textarea { grid-column: 2; min-height: 3rem; max-height: 25dvh; border: 0; border-radius: .35rem; background: transparent; padding: .45rem .25rem; }
 .composer-row textarea:focus { outline: 0; }
 .composer-row #request-reply { grid-column: 2; grid-row: 2; justify-self: end; align-self: center; min-height: 32px; padding: .2rem .55rem; font-size: .75rem; white-space: nowrap; }
 .composer-attach { grid-column: 3; grid-row: 1 / span 2; align-self: end; }
-.composer-row > button[type="submit"] { grid-column: 4; grid-row: 2; }
+.composer-row > button[type="submit"] { grid-column: 4; grid-row: 2; min-height: 44px; min-width: 44px; }
 .composer-attachments, .message-files { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .35rem; }
 .file-chip { display: inline-flex; align-items: center; gap: .35rem; max-width: 100%; padding: .15rem .45rem; border: 1px solid var(--line); border-radius: 999px; font-size: .8rem; }
 .file-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; min-height: 1.5rem; }
@@ -1450,7 +1450,7 @@ summary { overflow-wrap: anywhere; }
 }
 /* Popovers anchor to the action row, not to a trigger shifted by a thread link. */
 .message-links { position: relative; }
-.composer-row { grid-template-columns: auto minmax(0, 1fr) 36px 40px; }
+.composer-row { grid-template-columns: auto minmax(0, 1fr) 36px 44px; }
 .sidebar-head { margin: 0; padding: 0; }
 .sidebar-head .room-overview-open { display: flex; align-items: center; justify-content: space-between; gap: .5rem; width: 100%; min-width: 0; padding: .35rem; border: 0; border-radius: .4rem; background: transparent; color: var(--text); text-align: left; }
 .sidebar-head .room-overview-open:hover { background: var(--panel-raised); }
@@ -1465,7 +1465,7 @@ summary { overflow-wrap: anywhere; }
 .composer-row .composer-add { grid-column: 1; grid-row: 2; justify-self: start; }
 .composer-row #request-reply { grid-column: 2; grid-row: 2; }
 .composer-attach { grid-column: 3; grid-row: 2; }
-.composer-row > button[type="submit"] { grid-column: 4; grid-row: 2; }
+.composer-row > button[type="submit"] { grid-column: 4; grid-row: 2; min-height: 44px; min-width: 44px; }
 @media (max-width: 520px) {
   .composer-row #request-reply { padding-inline: .35rem; font-size: .68rem; }
 }
