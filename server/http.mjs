@@ -1,5 +1,5 @@
 // JDOT-PUBLIC-CSP-RUM begin: public-page policy
-import { dmEventVisibility } from "./dm-event-visibility.mjs";
+import { dmEventVisibility, dmConsentEventVisible } from "./dm-event-visibility.mjs";
 import { publicPageCsp } from "../deploy/public-search.mjs";
 // JDOT-PUBLIC-CSP-RUM end
 import { acceptPrefersHtml, publicHtmlNotFoundPath, publicSearchAssets, publicSearchCanonical, publicSearchMarketingPolicy, publicSearchSitemap, PUBLIC_NOT_FOUND_HTML, PUBLIC_SEARCH_CSP, PUBLIC_PAGE_LASTMOD, reviewedPublicSearchPaths } from "../deploy/public-search.mjs";
@@ -3777,7 +3777,8 @@ export function createRoomServer({ store, origin, assetRoot = new URL("../", imp
         identityId: store.bonds.identityForMember(roomId, viewerId),
         isOwner: viewerId === store.room(roomId).state.room.ownerId
       };
-      const roomEventVisible = event => dmEventVisible(event) && peerEventVisible(event, peerContext);
+      const roomEventVisible = event => dmEventVisible(event) && dmConsentEventVisible(event, viewerId, peerContext.isOwner)
+        && peerEventVisible(event, peerContext);
       // RC-2026-09-23-101: guest-agent scope gate, HTTP-layer half. The
       // store.command() gate (RC-2026-09-23-100) covers the event-sourced
       // command path, but the bounty-escrow, work-claim and inbox-collab
