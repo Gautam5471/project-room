@@ -93,10 +93,32 @@ async function readVersion(origin) {
   if (response.status !== 200) throw new Error(`Worker version HTTP ${response.status}`);
   return response.json();
 }
-function deploymentStatus(name) {
-  const text = command(['pnpm', 'exec', 'wrangler', 'deployments', 'status', ...(name === 'prod' ? ['--env', 'production'] : []), '--json'], 'cloudflare');
-  return JSON.parse(text.slice(text.indexOf('{')));
+// Cloudflare's API sometimes answers a read with HTTP 200 and a body wrangler
+// cannot parse ("Received a malformed response from the API"). That is a
+// transient read failure, not a statement about the deployment, so retry it a
+// few times with backoff. Any other failure, an empty or non-JSON result, and
+// exhausting the attempts all still fail closed: nothing is deployed on a guess.
+export const transientApiFailure = message => /malformed response from the API|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|HTTP 5\d\d/i.test(String(message ?? ''));
+export async function withApiRetry(read, { attempts = 5, delayMs = 2000, sleep = ms => new Promise(done => setTimeout(done, ms)), log = message => console.error(message) } = {}) {
+  let failure;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try { return await read(); } catch (error) {
+      failure = error;
+      if (attempt === attempts || !transientApiFailure(error?.message)) break;
+      const wait = delayMs * 2 ** (attempt - 1);
+      log(`Cloudflare API read failed (attempt ${attempt}/${attempts}); retrying in ${wait}ms: ${String(error.message).split('\n')[0]}`);
+      await sleep(wait);
+    }
+  }
+  throw failure;
 }
+export function parseDeploymentStatus(text) {
+  const start = String(text ?? '').indexOf('{');
+  if (start < 0) throw new Error('wrangler deployments status printed no JSON object');
+  try { return JSON.parse(text.slice(start)); } catch { throw new Error('wrangler deployments status printed unparseable JSON'); }
+}
+export const deploymentStatus = (name, run = command, retry = {}) => withApiRetry(
+  async () => parseDeploymentStatus(run(['pnpm', 'exec', 'wrangler', 'deployments', 'status', ...(name === 'prod' ? ['--env', 'production'] : []), '--json'], 'cloudflare')), retry);
 async function main() {
   const [mode, path, output] = process.argv.slice(2);
   if (mode === 'snapshot') {
