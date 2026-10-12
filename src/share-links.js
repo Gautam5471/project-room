@@ -2,6 +2,7 @@ import { publicJoinInviteHref } from "./room-deep-link.js";
 import { parseShareInviteCode } from "./share-invite-code.js";
 import { canInviteMembers } from "./events.js";
 import { stashPendingJoin, clearPendingJoin } from "./invite-context.js";
+import { uiText } from "./strings.js";
 
 // Kept in this module so the browser asset list does not need a new file.
 export function inviteMessage(title) {
@@ -11,9 +12,11 @@ export function inviteMessage(title) {
 
 export function deadInviteCopy() {
   return {
-    title: "This invite has ended",
-    scope: "Unable to open this invitation. Ask the person who invited you for a fresh link.",
-    status: "This invite is unavailable. Sign in and request access.",
+    title: uiText("join.dead.title"),
+    scope: uiText("join.dead.scope"),
+    status: uiText("join.dead.status"),
+    signedInStatus: uiText("join.dead.signedInStatus"),
+    roomsLink: uiText("join.dead.roomsLink"),
   };
 }
 
@@ -608,6 +611,8 @@ export function installShareLinks({ client, accountClient, getState, getSession,
     $("#shared-agent-details").hidden = true; $("#shared-agent-details").open = false; $("#shared-agent-instructions").value = "";
     $("#join-link-retry").hidden = true;
     $("#join-link-retry").textContent = "Retry";
+    $("#join-account-signin").hidden = false; $("#join-account-guest-hint").hidden = false;
+    const roomsLinkReset = $("#join-account-rooms-link"); if (roomsLinkReset) roomsLinkReset.hidden = true;
     $("#join-access-details").open = false; $("#join-switch-warning").hidden = true;
     $("#join-link-permissions").textContent = ""; $("#join-link-expiry").textContent = "";
     $("#join-link-submit").textContent = "Join room"; $("#join-link-signout").hidden = true;
@@ -688,12 +693,27 @@ export function installShareLinks({ client, accountClient, getState, getSession,
       }
       if (!resume && error?.code === "link_unavailable") {
         const dead = deadInviteCopy();
+        // A signed-in person needs neither the Log in choice nor the guest
+        // hint; they keep the fresh-link ask and a link back to their rooms.
+        const signedIn = Boolean(accountClient.session?.authenticated);
+        const roomsLink = $("#join-account-rooms-link");
         $("#join-link-title").textContent = dead.title;
         $("#join-link-scope").textContent = dead.scope;
+        $("#join-account-signin").hidden = signedIn;
+        $("#join-account-guest-hint").hidden = signedIn;
+        if (roomsLink) {
+          roomsLink.hidden = !signedIn;
+          roomsLink.textContent = dead.roomsLink;
+          roomsLink.setAttribute("href", humanJoinShareBase());
+          // r136: a dead link's fragment still sits in the pending-join mirror,
+          // so a plain trip to / would re-open this same dialog. Drop the
+          // mirror before the app root loads.
+          roomsLink.addEventListener("click", () => clearPendingJoin(window.sessionStorage));
+        }
         $("#join-account-choices").hidden = false;
         $("#join-link-form").hidden = true;
         $("#join-link-retry").hidden = true;
-        joinStatus(dead.status);
+        joinStatus(signedIn ? dead.signedInStatus : dead.status);
         return;
       }
       $("#join-link-scope").textContent = "Unable to open this invitation.";

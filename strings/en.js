@@ -380,5 +380,10 @@ export default {
   "human.face.sharedRequest": "Shared request",
   "human.face.openResult": "Open result",
   "human.assistantChange": "Change",
-  "deletion.plain.shared": "Messages and work history already shared in those rooms will remain."
+  "deletion.plain.shared": "Messages and work history already shared in those rooms will remain.",
+  "join.dead.title": "This invite has ended",
+  "join.dead.scope": "Unable to open this invitation. Ask the person who invited you for a fresh link.",
+  "join.dead.status": "This invite is unavailable. Sign in and request access.",
+  "join.dead.signedInStatus": "This invite is unavailable. Ask the person who invited you for a fresh link.",
+  "join.dead.roomsLink": "Back to your rooms"
 };
