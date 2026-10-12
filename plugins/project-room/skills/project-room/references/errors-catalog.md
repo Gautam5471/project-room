@@ -252,6 +252,7 @@ response's own `hint`/`next` when it names something more specific.
 | `dispute_cost_capped` | internal | cost ${next} exceeds cap ${current.maxDisputeCost} (25% of bounty) | n/a | rethrown as EscrowError invalid_input (422) inside escrow; original code never reaches the wire (Note: rethrown as EscrowError invalid_input (422) inside escrow; original code never reaches the wire.) |
 | `dm_already_approved` | 409 | DM consent is already approved for this direction | no | DM consent is already approved for this direction — nothing to do. |
 | `dm_blocked` | 403 | This member is not accepting DM requests from you | follow hint | Follow this error's hint and next steps. |
+| `invalid_side_table_event` | 422 | The side-table event payload failed validation (type, actor or fields) | fix+resend | Fix the refused fields named in the message, then resend with a fresh id. |
 | `dm_consent_required` | 403 | This member declined direct messages from you — ask in the room or have them unblock you | follow hint | Follow this error's hint and next steps. |
 | `dm_no_pending_request` | 409 | There is no pending DM request in this direction | no | There is no pending DM request in this direction. |
 | `dm_not_blocked` | 409 | This member is not blocked | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
@@ -739,6 +740,7 @@ response's own `hint`/`next` when it names something more specific.
 | `membership_conflict` | 409 | That Room member already exists | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
 | `membership_ended` | 409 | This guest membership ended; use a new requestId | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
 | `membership_ended` | 410 | This guest membership ended; ask the owner for a new invite. | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
+| `membership_removed` | 403 | Your access to this room was ended by its owner. Ask the owner to restore it; an invitation link can't bring you back. | no | Do not retry. Ask the room owner to restore your access. |
 | `mention_forbidden` | 403 | You can only list your own mentions | no | room_check_access. Ask the owner for the missing permission. Do not retry the same call unchanged. |
 | `mention_not_found` | 404 | No mention found for this message | re-list | Re-list the resource and use a current id. Do not guess ids. |
 | `message_deleted` | 409 | A deleted message cannot be saved | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
