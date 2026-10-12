@@ -93,9 +93,60 @@ async function readVersion(origin) {
   if (response.status !== 200) throw new Error(`Worker version HTTP ${response.status}`);
   return response.json();
 }
-function deploymentStatus(name) {
-  const text = command(['pnpm', 'exec', 'wrangler', 'deployments', 'status', ...(name === 'prod' ? ['--env', 'production'] : []), '--json'], 'cloudflare');
-  return JSON.parse(text.slice(text.indexOf('{')));
+// Cloudflare's API sometimes answers a read with HTTP 200 and a body wrangler
+// cannot parse ("Received a malformed response from the API"). That is a
+// transient read failure, not a statement about the deployment, so retry it a
+// few times with backoff. Any other failure, an empty or non-JSON result, and
+// exhausting the attempts all still fail closed: nothing is deployed on a guess.
+export const transientApiFailure = message => /malformed response from the API|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|HTTP 5\d\d/i.test(String(message ?? ''));
+export async function withApiRetry(read, { attempts = 5, delayMs = 2000, sleep = ms => new Promise(done => setTimeout(done, ms)), log = message => console.error(message) } = {}) {
+  let failure;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try { return await read(); } catch (error) {
+      failure = error;
+      if (attempt === attempts || !transientApiFailure(error?.message)) break;
+      const wait = delayMs * 2 ** (attempt - 1);
+      log(`Cloudflare API read failed (attempt ${attempt}/${attempts}); retrying in ${wait}ms: ${String(error.message).split('\n')[0]}`);
+      await sleep(wait);
+    }
+  }
+  throw failure;
+}
+export function parseDeploymentStatus(text) {
+  const start = String(text ?? '').indexOf('{');
+  if (start < 0) throw new Error('wrangler deployments status printed no JSON object');
+  try { return JSON.parse(text.slice(start)); } catch { throw new Error('wrangler deployments status printed unparseable JSON'); }
+}
+// Fallback when wrangler keeps rejecting the deployments response: read the same
+// endpoint wrangler reads (GET .../workers/scripts/<name>/deployments, newest
+// first, wrangler takes deployments[0]) with the CI token and parse it strictly.
+// The result has the shape `wrangler deployments status --json` prints.
+const workerScriptName = (name, config = JSON.parse(readFileSync('cloudflare/wrangler.jsonc', 'utf8'))) => {
+  const script = name === 'prod' ? config?.env?.production?.name : config?.name;
+  if (typeof script !== 'string' || !/^[A-Za-z0-9_-]+$/.test(script)) throw new Error(`no Worker script name for ${name} in cloudflare/wrangler.jsonc`);
+  return script;
+};
+export async function restDeploymentStatus(name, { env = process.env, fetcher = fetch, config } = {}) {
+  const token = env.CLOUDFLARE_API_TOKEN, account = env.CLOUDFLARE_ACCOUNT_ID;
+  if (!token || !/^[0-9a-f]{32}$/i.test(account ?? '')) throw new Error('REST deployment fallback needs CLOUDFLARE_API_TOKEN and a 32-hex CLOUDFLARE_ACCOUNT_ID');
+  const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${workerScriptName(name, config)}/deployments`, { redirect: 'error', headers: { authorization: `Bearer ${token}`, accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+  if (response.status !== 200) throw new Error(`Cloudflare deployments REST HTTP ${response.status}`);
+  let body;
+  try { body = JSON.parse(await response.text()); } catch { throw new Error('Cloudflare deployments REST returned unparseable JSON'); }
+  const latest = body?.success === true && Array.isArray(body?.result?.deployments) ? body.result.deployments[0] : null;
+  if (!latest || !Array.isArray(latest.versions)) throw new Error('Cloudflare deployments REST reported no usable latest deployment');
+  const total = latest.versions.reduce((sum, row) => sum + Number(row?.percentage), 0);
+  if (latest.versions.some(row => typeof row?.version_id !== 'string') || total !== 100) throw new Error('Cloudflare deployments REST latest deployment does not allocate exactly 100%');
+  return latest;
+}
+export async function deploymentStatus(name, run = command, retry = {}, rest = restDeploymentStatus) {
+  try {
+    return await withApiRetry(async () => parseDeploymentStatus(run(['pnpm', 'exec', 'wrangler', 'deployments', 'status', ...(name === 'prod' ? ['--env', 'production'] : []), '--json'], 'cloudflare')), retry);
+  } catch (failure) {
+    if (!/malformed response from the API/i.test(failure?.message ?? '')) throw failure;
+    (retry.log ?? console.error)('wrangler cannot parse the deployments response; reading it over the REST API instead');
+    return rest(name);
+  }
 }
 async function main() {
   const [mode, path, output] = process.argv.slice(2);
