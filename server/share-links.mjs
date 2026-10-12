@@ -468,6 +468,8 @@ export class ShareLinks {
             fail(409, "join_session_lost", "Your earlier join used another browser session. Return to that session or sign in with the same account. No additional guest was created. Agents should reuse their saved agent identity.");
           }
         }
+        const bound = this.db.prepare("SELECT member_id FROM member_accounts WHERE room_id=? AND account_id=?").get(row.room_id, auth.account.id);
+        if (this.store.room(row.room_id).state.members[bound.member_id]?.active === false) this.reactivateSelfLeft(row, bound.member_id, auth, redemptionId);
         return this.result(slotToken, row.room_id, true); // Existing membership survives a full or expired invitation; removed members still fail authentication.
       }
       if (this.view(row).status !== "active") unavailable();
@@ -543,6 +545,31 @@ export class ShareLinks {
       this.creditReferral(row, memberId, now, { address: clientAddress, session: clientSession ?? slotToken });
       return this.result(slotToken, row.room_id, false);
     });
+  }
+  // A member who left on their own (Leave room) comes back with a fresh valid
+  // invitation, which grants the permissions THAT invitation carries. One
+  // transaction, no second member_accounts row. A member the owner removed
+  // stays out: the link is not a way around a removal.
+  reactivateSelfLeft(row, memberId, auth, redemptionId) {
+    const room = this.store.room(row.room_id), member = room.state.members[memberId];
+    const last = this.db.prepare("SELECT body FROM events WHERE room_id=? AND json_extract(body,'$.type')=? AND json_extract(body,'$.data.memberId')=? ORDER BY sequence DESC LIMIT 1")
+      .get(row.room_id, T.MEMBER_ACCESS_CHANGED, memberId);
+    const lastEvent = last ? JSON.parse(last.body) : null;
+    if (!lastEvent || lastEvent.data?.active !== false || lastEvent.actorId !== memberId) {
+      fail(403, "membership_removed", "Your access to this room was ended by its owner. Ask the owner to restore it; an invitation link can't bring you back.");
+    }
+    if (this.view(row).status !== "active") unavailable();
+    refuseArchivedWrite(room.state);
+    if (room.sequence >= PILOT_LIMITS.eventsPerRoom || activeMemberCount(room.state.members) >= PILOT_LIMITS.membersPerRoom) fail(409, "pilot_limit", "This room is full; ask its owner for help");
+    const access = this.accessOf(row), role = access === "co_admin" ? "moderator" : access === "member" ? "member" : "guest";
+    const admission = this.admissionIssuer(row, room), now = this.store.now();
+    const rejoin = event({ id: randomUUID(), idempotencyKey: `link-rejoin:${row.id}:${redemptionId}`, roomId: row.room_id, actorId: admission.memberId, type: T.MEMBER_ACCESS_CHANGED, at: new Date(now).toISOString(),
+      data: { memberId, expectedMemberRevision: member.revision, permissions: access === "co_admin" ? linkPermissions("co_admin") : [...INVITATION_ROLES[role]], active: true, authorityPolicyVersion: MEMBERSHIP_AUTHORITY_POLICY_VERSION } });
+    const state = { ...applyEventWithGrowth(room.state, rejoin, growthCollector).state, eventLog: [], seenEvents: {}, seenIdempotencyKeys: {} };
+    const projection = this.store.storedProjection(row.room_id, state), sequence = room.sequence + 1;
+    if (Buffer.byteLength(projection) > PILOT_LIMITS.projectionBytes) fail(409, "pilot_limit", "This room has reached its storage limit; no data was changed. Ask the room owner to raise the room's limit, or try again later.");
+    this.db.prepare("INSERT INTO events VALUES(?,?,?,?)").run(row.room_id, sequence, rejoin.id, JSON.stringify(rejoin));
+    this.db.prepare("UPDATE rooms SET sequence=?,projection=? WHERE id=?").run(sequence, projection, row.room_id);
   }
   // A share link is an invite link: a first join credits the link's issuer on
   // the room's referral board (via "invite"), in the join's transaction, the

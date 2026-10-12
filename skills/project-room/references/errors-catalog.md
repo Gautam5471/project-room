@@ -739,6 +739,7 @@ response's own `hint`/`next` when it names something more specific.
 | `membership_conflict` | 409 | That Room member already exists | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
 | `membership_ended` | 409 | This guest membership ended; use a new requestId | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
 | `membership_ended` | 410 | This guest membership ended; ask the owner for a new invite. | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
+| `membership_removed` | 403 | Your access to this room was ended by its owner. Ask the owner to restore it; an invitation link can't bring you back. | no | Do not retry. Ask the room owner to restore your access. |
 | `mention_forbidden` | 403 | You can only list your own mentions | no | room_check_access. Ask the owner for the missing permission. Do not retry the same call unchanged. |
 | `mention_not_found` | 404 | No mention found for this message | re-list | Re-list the resource and use a current id. Do not guess ids. |
 | `message_deleted` | 409 | A deleted message cannot be saved | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |
