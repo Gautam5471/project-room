@@ -2365,7 +2365,7 @@ this.slaBreachAlerts = new SlaBreachAlertJournal(this); // Task 26: durable in-a
         // The same holds for an invitee who left on their own and came back
         // through a newer invitation: their old, inactive member gave up the
         // binding, which now belongs to the new member in the same room.
-        const reboundInvitee = !binding && members[stored.intended_member_id]?.active === false
+        const reboundInvitee = !binding && this.memberSelfLeft(stored.room_id, stored.intended_member_id, { members })
           && Boolean(this.db.prepare("SELECT 1 FROM member_accounts WHERE room_id=? AND account_id=? AND member_id<>?").get(stored.room_id, stored.intended_account_id, stored.intended_member_id));
         const retiredInvitee = !binding && (this.db.prepare("SELECT active FROM accounts WHERE id=?").get(stored.intended_account_id)?.active === 0 || reboundInvitee);
         assertInvitationMembershipEvidence(stored, linked, binding, { sequence, state: { members } }, { retiredInvitee });
@@ -3226,11 +3226,15 @@ this.slaBreachAlerts = new SlaBreachAlertJournal(this); // Task 26: durable in-a
   // returned: a new invitation is not a way around a removal.
   selfLeftBinding(roomId, accountId, state) {
     const bound = this.db.prepare("SELECT member_id FROM member_accounts WHERE room_id=? AND account_id=?").get(roomId, accountId);
-    if (!bound || state.members[bound.member_id]?.active !== false) return null;
+    return bound && this.memberSelfLeft(roomId, bound.member_id, state) ? bound.member_id : null;
+  }
+  // Inactive, and the last deactivation was the member's own act.
+  memberSelfLeft(roomId, memberId, state) {
+    if (state.members[memberId]?.active !== false) return false;
     const last = this.db.prepare("SELECT body FROM events WHERE room_id=? AND json_extract(body,'$.type')=? AND json_extract(body,'$.data.memberId')=? ORDER BY sequence DESC LIMIT 1")
-      .get(roomId, T.MEMBER_ACCESS_CHANGED, bound.member_id);
-    const event = last ? JSON.parse(last.body) : null;
-    return event && event.data?.active === false && event.actorId === bound.member_id ? bound.member_id : null;
+      .get(roomId, T.MEMBER_ACCESS_CHANGED, memberId);
+    const lastEvent = last ? JSON.parse(last.body) : null;
+    return Boolean(lastEvent) && lastEvent.data?.active === false && lastEvent.actorId === memberId;
   }
   issueInvitation(accountSessionToken, roomId, details) {
     const {
