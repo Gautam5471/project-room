@@ -99,6 +99,11 @@ export const EVENT_TYPES = Object.freeze({
   BOND_ACTIVATED: "bond.activated",
   BOND_REVOKED: "bond.revoked",
   DM_POSTED: "dm.posted",
+  // DM-consent receipt. The consent state lives in the dm_consents side
+  // table (server/dm-consents.mjs); this event is the thin sequenced record
+  // so a pair member's open session refreshes live. server/dm-consents.mjs
+  // appends it; server/dm-event-visibility.mjs hides it from non-parties.
+  DM_CONSENT_CHANGED: "dm.consent_changed",
   // Land queue receipt. The land_queue table is the source of truth; this
   // event is the thin wake record (pr, head, state, what changed).
   LAND_UPDATED: "land.updated",
@@ -596,6 +601,7 @@ export function applyEvent(current, incoming) {
     [EVENT_TYPES.BOND_ACTIVATED]: recordBond,
     [EVENT_TYPES.BOND_REVOKED]: recordBond,
     [EVENT_TYPES.DM_POSTED]: recordPeerDm,
+    [EVENT_TYPES.DM_CONSENT_CHANGED]: recordDmConsentChange,
     [EVENT_TYPES.LAND_UPDATED]: recordLandUpdate,
     [EVENT_TYPES.WORK_CLAIM_UPDATED]: recordWorkClaimUpdate,
     [EVENT_TYPES.ROOM_STARTER_SEEDED]: recordStarterSeeded
@@ -1719,6 +1725,14 @@ function recordBond(state, incoming) {
     revokedById: incoming.data.revokedById,
     reason: incoming.data.reason
   };
+}
+
+function recordDmConsentChange(state, incoming) {
+  requireMember(state, incoming.actorId);
+  // Receipt only. The dm_consents table is the source of truth (RC-2026-09-19-070);
+  // this sequenced event exists so a live session can refresh its pending-DM view.
+  requireFields(incoming.data, ["requesterId", "targetId", "status"]);
+  if (incoming.data.requesterId === incoming.data.targetId) throw new Error("Cannot consent with yourself");
 }
 
 function recordPeerDm(state, incoming) {
