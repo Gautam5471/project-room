@@ -21,71 +21,27 @@ import { publicAssets } from "./runtime-package.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-// Modules other batches own, plus modules a script or the shipped asset
-// set loads that this walk would otherwise call unreachable.
+// Exceptions still outside the checked import graph. Keep this list narrow:
+// shipping an asset or passing a unit test does not prove feature integration.
+// Remove an exception when its actual runtime or operational loader is wired.
 export const KEEP = [
-  // Other batches will wire these. (src/design-tokens.js was dropped from
-  // this list 2026-10-06: server/receipts-page.mjs imports it now, so the
-  // walk reaches it from server/http.mjs.)
-  // herdr B6 supervision inbox: not mounted yet; remove from KEEP when wired.
+  // Unmounted supervision/session integration; retain pending product review.
   "server/supervision.mjs",
   "server/supervision-routes.mjs",
-  "server/receipt-standard.mjs",
-  // Scripts and workflows load these directly.
-  "server/backup.mjs",
-  "server/recovery.mjs",
-  "server/secret-scan.mjs",
-  "server/spam-shadow-report.mjs",
-  // HB-1a. Wired by HB-1b and NOTIFY. Email send stays inert until then.
+  "server/session-adapter.mjs",
+  "server/session-adapter/herdr-bridge-adapter.mjs",
+  // Notification delivery integrations remain inert, not implicitly enabled.
   "server/notify-policy.mjs",
   "server/notify-email.mjs",
   "server/channel-adapters/webhook-secret.mjs",
   "server/channel-adapters/slack-webhook.mjs",
   "server/channel-adapters/discord-webhook.mjs",
-  // Updates batch. Keep even when this walk calls them orphans.
-  "server/needs-me.mjs",
-  "server/attention.mjs",
-  "server/owner-attention.mjs",
-  "server/next-actions.mjs",
-  "server/next-actions-routes.mjs",
-  "server/room-activation-pack.mjs",
-  "server/orient.mjs",
-  "server/room-context.mjs",
-  "server/mention-receipts.mjs",
-  "client/attention-inbox.mjs",
-  // Claude channel adapter and the stdio transport it uses.
-  "client/claude-channel.mjs",
-  "client/mcp-stdio.mjs",
-  // Live event and growth tests import this fixture. It is not a runtime loader.
-  "src/seed.js",
-  // Open PRs #1299, #1305, #1307, #1309. Do not treat their modules as orphans.
-  "server/agent-rooms.mjs",
-  // PR #1615 (orch-merge-queue): wired by the server/http.mjs mount, which is
-  // file-leased to claude-code-drops until 2026-10-07T00:23Z (ASK with exact
-  // diff posted in room). Not an orphan; remove when the mount lands.
+  // Existing merge-queue integration remains unmounted.
   "server/merge-queue.mjs",
-  "server/growth-loop.mjs",
-  "server/referrals.mjs",
-  "server/room-lifecycle.mjs",
-  "server/share-links.mjs",
-  "src/agent-connections.js",
-  "src/agent-invite-ui.js",
-  "src/referral-board.js",
-  "src/room-layout.js",
-  "src/share-links.js",
-  "server/agent-plugin-routes.mjs",
-  "server/agent-plugin-store.mjs",
-  "server/agent-webhook-subscriptions.mjs",
-  "server/outbound-webhooks.mjs",
-  "server/webhook-dispatch.mjs",
-  "client/room-agent.mjs",
-  "server/work-claim-routes.mjs",
-  "server/work-claim-sqlite.mjs",
-  "server/work-claims.mjs",
-  // herdr redesign: wired by the integration step (mount in http.mjs +
-  // runtime-package registration). Not orphans; remove from KEEP when wired.
-  "server/session-adapter.mjs",
-  "server/session-adapter/herdr-bridge-adapter.mjs",
+  // Operational/test entry points not discovered by this literal graph.
+  "server/secret-scan.mjs",
+  "server/spam-shadow-report.mjs",
+  "src/seed.js",
 ];
 
 const KEEP_SET = new Set(KEEP);
