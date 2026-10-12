@@ -34,6 +34,7 @@ function makeDmStore(states) {
   const db = new DatabaseSync(":memory:");
   db.exec(dmConsentSchema);
   db.exec(AUTONOMY_TIERS_SCHEMA);
+  const events = [];
   return {
     db,
     transaction(fn) {
@@ -45,7 +46,13 @@ function makeDmStore(states) {
     room(id) {
       const state = states[id];
       return state ? { state } : null;
-    }
+    },
+    // Append-only stub: the real store's appendSideTableEvent is verified on a
+    // real RoomStore in tests/dm-consent-events.test.js.
+    appendSideTableEvent(roomId, event) {
+      events.push(event);
+    },
+    events
   };
 }
 
