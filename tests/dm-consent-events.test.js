@@ -71,3 +71,37 @@ test("a dm.consent_changed event is pair-visible: parties and owner see it, othe
   assert.equal(consentEvents(store.eventsAfter(ownerKey, "commons", before, 100).events).length, 2, "the owner sees pair metadata for moderation");
   assert.equal(carolView.length, 0, "a non-party member must not see the pair's consent events");
 });
+
+test("fail-first: revoke, block and unblock append pair events; a repeat block appends none", t => {
+  const store = fixture(t);
+  const aliceKey = store.issueAccessKey("commons", "alice");
+  const before = store.room("commons").sequence;
+
+  store.dmConsents.request("commons", "alice", "bob", "quick question");
+  store.dmConsents.decide("commons", "bob", "alice", "approve");
+  store.dmConsents.request("commons", "bob", "alice");
+  store.dmConsents.decide("commons", "alice", "bob", "approve");
+  const afterApprovals = consentEvents(store.eventsAfter(aliceKey, "commons", before, 100).events);
+  assert.equal(afterApprovals.length, 4);
+
+  store.dmConsents.revoke("commons", "alice", "bob");
+  const afterRevoke = consentEvents(store.eventsAfter(aliceKey, "commons", before, 100).events);
+  assert.equal(afterRevoke.length, 6, "revoke() must append one event per approved directional row");
+  assert.deepEqual(afterRevoke.slice(4).map(e => [e.status, e.requesterId, e.targetId]).sort(),
+    [["revoked", "alice", "bob"], ["revoked", "bob", "alice"]]);
+  assert.equal(store.room("commons").sequence, before + 6);
+
+  store.dmConsents.block("commons", "bob", "alice");
+  store.dmConsents.block("commons", "bob", "alice");
+  const afterBlock = consentEvents(store.eventsAfter(aliceKey, "commons", before, 100).events);
+  assert.equal(afterBlock.length, 7, "block() must append once; a repeat block is idempotent and appends nothing");
+  assert.deepEqual([afterBlock[6].status, afterBlock[6].requesterId, afterBlock[6].targetId],
+    ["blocked", "alice", "bob"]);
+
+  store.dmConsents.unblock("commons", "bob", "alice");
+  const afterUnblock = consentEvents(store.eventsAfter(aliceKey, "commons", before, 100).events);
+  assert.equal(afterUnblock.length, 8);
+  assert.deepEqual([afterUnblock[7].status, afterUnblock[7].requesterId, afterUnblock[7].targetId],
+    ["rejected", "alice", "bob"]);
+  assert.equal(store.room("commons").sequence, before + 8);
+});
