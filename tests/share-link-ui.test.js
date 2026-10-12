@@ -277,8 +277,14 @@ const guestJoinDom = () => {
     setItem: (key, value) => { storage.set(key, String(value)); },
     removeItem: key => { storage.delete(key); },
   };
+  const joinStorage = new Map();
+  const sessionStorage = {
+    getItem: key => (joinStorage.has(key) ? joinStorage.get(key) : null),
+    setItem: (key, value) => { joinStorage.set(key, String(value)); },
+    removeItem: key => { joinStorage.delete(key); },
+  };
   const location = { hostname: "localhost", origin: "http://localhost:52331", hash: "" };
-  const globals = { document: { querySelector: node }, window: { addEventListener() {} }, location, localStorage };
+  const globals = { document: { querySelector: node }, window: { addEventListener() {}, sessionStorage }, location, localStorage, sessionStorage };
   const previous = new Map(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const install = () => { for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value }); };
   const uninstall = () => {
@@ -287,7 +293,7 @@ const guestJoinDom = () => {
       else delete globalThis[key];
     }
   };
-  return { node, nodes, location, storage, focused: () => focused, install, uninstall };
+  return { node, nodes, location, storage, joinStorage, focused: () => focused, install, uninstall };
 };
 
 const previewFor = (title = "Synthetic room") => ({
@@ -611,6 +617,55 @@ test("reload recovers a pending join even when its success filled the invitation
     assert.equal(recovered.linkToken, token);
     assert.equal(opened, true);
     assert.equal(readUncertainJoin(), null);
+  } finally { dom.uninstall(); }
+});
+
+test("a signed-in person on a dead link keeps the fresh-link ask and a way back to their rooms", async () => {
+  const dom = guestJoinDom();
+  const accountClient = {
+    session: { authenticated: true, account: { id: "signed-in-person" } },
+    async prepareShareLink() { throw Object.assign(new Error("gone"), { code: "link_unavailable", status: 410 }); },
+  };
+  dom.install();
+  try {
+    const ui = installShareLinks({ client: { generation: 0 }, accountClient, getState: () => null, getSession: () => null, openRoom() {} });
+    await ui.open({ token: "c".repeat(43) });
+    assert.equal(dom.node("#join-link-title").textContent, "This invite has ended");
+    assert.match(dom.node("#join-link-scope").textContent, /fresh link/);
+    assert.doesNotMatch(dom.node("#join-link-status").textContent, /Sign in and request access/);
+    assert.match(dom.node("#join-link-status").textContent, /fresh link/);
+    assert.equal(dom.node("#join-account-signin").hidden, true, "no Log in choice for a signed-in person");
+    assert.equal(dom.node("#join-account-guest-hint").hidden, true, "no guest hint for a signed-in person");
+    const roomsLink = dom.node("#join-account-rooms-link");
+    assert.equal(roomsLink.hidden, false, "a signed-in person can get back to their rooms");
+    assert.equal(roomsLink.textContent, "Back to your rooms", "the rooms link has visible, named text");
+    assert.equal(roomsLink.getAttribute("href"), "http://localhost:52331", "the rooms link lands on the app root");
+    dom.joinStorage.set("pr-pending-join", "#join/" + "c".repeat(43));
+    await roomsLink.handlers.click();
+    assert.equal(dom.joinStorage.has("pr-pending-join"), false, "the dead link's pending-join mirror is gone before the app root loads");
+  } finally { dom.uninstall(); }
+});
+
+test("a later open after a signed-in dead invite restores the sign-in and guest choices", async () => {
+  const dom = guestJoinDom();
+  let dead = true;
+  const accountClient = {
+    session: { authenticated: true, account: { id: "signed-in-person" } },
+    async prepareShareLink() {
+      if (dead) throw Object.assign(new Error("gone"), { code: "link_unavailable", status: 410 });
+      return { session: this.session, preview: previewFor() };
+    },
+  };
+  dom.install();
+  try {
+    const ui = installShareLinks({ client: { generation: 0 }, accountClient, getState: () => null, getSession: () => null, openRoom() {} });
+    await ui.open({ token: "d".repeat(43) });
+    assert.equal(dom.node("#join-account-signin").hidden, true);
+    dead = false; accountClient.session = {};
+    await ui.open({ token: "e".repeat(43) });
+    assert.equal(dom.node("#join-account-signin").hidden, false, "signed-out join path keeps its Log in choice");
+    assert.equal(dom.node("#join-account-guest-hint").hidden, false);
+    assert.equal(dom.node("#join-account-rooms-link").hidden, true);
   } finally { dom.uninstall(); }
 });
 
