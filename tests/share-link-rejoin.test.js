@@ -127,3 +127,13 @@ test("targeted invitation: an owner-removed member stays blocked at issuance and
   assert.throws(() => invite("second", "friend-2"), error => error.status === 409 && error.code === "membership_conflict");
   assert.equal(members()["friend-1"].active, false);
 });
+
+test("the integrity audit refuses a released binding when the old member was removed by the owner", t => {
+  const { store, invite, accept, setActive } = targeted(t);
+  accept(invite("first", "friend-1"));
+  setActive(store.issueAccessKey("commons", "owner"), "friend-1", false);
+  // Forge what a rebound invitee looks like: the old binding released, the account bound to another member.
+  store.db.prepare("DELETE FROM member_accounts WHERE room_id='commons' AND member_id='friend-1'").run();
+  store.db.prepare("INSERT INTO member_accounts(room_id,member_id,account_id,origin) VALUES('commons','friend-x','account-friend','forged')").run();
+  assert.throws(() => store.verifyInvitationAudit(), /operator reconciliation/);
+});
