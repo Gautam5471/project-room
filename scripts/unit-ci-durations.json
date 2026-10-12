@@ -964,6 +964,7 @@
   "tests/f12-board-mcp.test.js": 813,
   "tests/work-claims-read.test.js": 1590,
   "tests/composer-hint.test.js": 386,
+  "tests/composer-send-touch-target.test.js": 103,
   "tests/mcp-docs-accuracy.test.js": 94,
   "tests/audit2-guest-hint-contrast.test.js": 91,
   "tests/anon-auth-before-validation.test.js": 2144,
