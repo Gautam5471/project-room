@@ -92,7 +92,7 @@
     "scripts/owner-project-offers-browser-check.mjs": 10464,
     "scripts/password-reset-browser-check.mjs": 18631,
     "scripts/people-rail-browser-check.mjs": 1805,
-    "scripts/pinned-messages-browser-check.mjs": 3456,
+    "scripts/pinned-messages-browser-check.mjs": 5184,
     "scripts/portable-work-browser-check.mjs": 7325,
     "scripts/progressive-disclosure-check.mjs": 6314,
     "scripts/project-offers-browser-check.mjs": 4918,

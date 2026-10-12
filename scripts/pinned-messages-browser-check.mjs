@@ -156,3 +156,21 @@ for (const [label, viewport] of [["desktop", { width: 1440, height: 1000 }], ["m
     assert.deepEqual(f.pins(), []);
   });
 }
+
+// muse-room 12573: an open section with many pins scrolls inside itself, so the
+// composer stays on a 390 px phone screen.
+test("pinned messages mobile: an open section with many pins keeps the composer on screen", { timeout: 60000 }, async t => {
+  const f = await setup(t, { width: 390, height: 844 }), { page } = f;
+  for (let index = 1; index <= 6; index++) {
+    const body = `Pinned note ${index}: ${"keep this handy ".repeat(4)}`;
+    f.send("owner", T.MESSAGE_POSTED, { messageId: randomUUID(), body });
+    f.send("owner", T.MESSAGE_PINNED, { messageId: f.messageId(body) });
+  }
+  await f.items.nth(5).waitFor({ state: "attached" });
+  await f.panel.evaluate(el => { el.open = true; });
+  const list = page.locator("#pinned-list");
+  const sizes = await list.evaluate(el => ({ client: el.clientHeight, scroll: el.scrollHeight, overflow: getComputedStyle(el).overflowY }));
+  assert.ok(sizes.scroll > sizes.client && sizes.overflow === "auto", `the pinned list scrolls inside a capped panel (${JSON.stringify(sizes)})`);
+  const input = await page.locator("#message-input").boundingBox();
+  assert.ok(input && input.y + input.height <= 844, `the composer stays on screen (input bottom ${input && input.y + input.height})`);
+});
