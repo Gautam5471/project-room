@@ -252,6 +252,7 @@ response's own `hint`/`next` when it names something more specific.
 | `dispute_cost_capped` | internal | cost ${next} exceeds cap ${current.maxDisputeCost} (25% of bounty) | n/a | rethrown as EscrowError invalid_input (422) inside escrow; original code never reaches the wire (Note: rethrown as EscrowError invalid_input (422) inside escrow; original code never reaches the wire.) |
 | `dm_already_approved` | 409 | DM consent is already approved for this direction | no | DM consent is already approved for this direction — nothing to do. |
 | `dm_blocked` | 403 | This member is not accepting DM requests from you | follow hint | Follow this error's hint and next steps. |
+| `invalid_side_table_event` | 422 | The side-table event payload failed validation (type, actor or fields) | fix+resend | Fix the refused fields named in the message, then resend with a fresh id. |
 | `dm_consent_required` | 403 | This member declined direct messages from you — ask in the room or have them unblock you | follow hint | Follow this error's hint and next steps. |
 | `dm_no_pending_request` | 409 | There is no pending DM request in this direction | no | There is no pending DM request in this direction. |
 | `dm_not_blocked` | 409 | This member is not blocked | no | Re-check access and current work. If it repeats, report error.code and the full message to the room owner — this code has no mapped recovery. |

@@ -256,6 +256,7 @@
   "tests/display-name-guard.test.js": 25361,
   "tests/display-name-impersonation.test.js": 53097,
   "tests/dispute-arbiters.test.js": 6408,
+  "tests/dm-consent-events.test.js": 489,
   "tests/dm-consent-ui.test.js": 7682,
   "tests/dm-consents-autonomy-tier.test.js": 35449,
   "tests/dm-reply-party.test.js": 798,

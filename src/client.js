@@ -311,8 +311,8 @@ export class AccountClient {
 // Single source for the connected status line; app.js matches this exact text.
 const CONNECTED_STATUS = "Connected to room service · no peer read or processing receipt";
 export class RoomClient {
-  constructor({ fetcher = globalThis.fetch.bind(globalThis), events = globalThis.EventSource, accountClient = null, onSnapshot = () => {}, onStatus = () => {}, onAccessEnded = () => {}, onTyping = () => {} } = {}) {
-    Object.assign(this, { fetcher, events, accountClient, onSnapshot, onStatus, onAccessEnded, onTyping });
+  constructor({ fetcher = globalThis.fetch.bind(globalThis), events = globalThis.EventSource, accountClient = null, onSnapshot = () => {}, onStatus = () => {}, onAccessEnded = () => {}, onTyping = () => {}, onConsentChange = () => {} } = {}) {
+    Object.assign(this, { fetcher, events, accountClient, onSnapshot, onStatus, onAccessEnded, onTyping, onConsentChange });
     this.session = null;
     this.sequence = 0;
     this.generation = 0;
@@ -988,6 +988,9 @@ export class RoomClient {
       if (!ownsStream()) return;
       let receipt;
       try { receipt = JSON.parse(message.data); } catch { /* Unknown notifications still force a read. */ }
+      // Consent state is not part of the room projection, so a snapshot render
+      // alone cannot refresh it; the panel refetches on a consent change.
+      if (receipt?.event?.type === "dm.consent_changed") this.onConsentChange?.();
       refreshStream(receipt);
     });
     stream.addEventListener("typing", message => {
