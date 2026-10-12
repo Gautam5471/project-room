@@ -364,6 +364,7 @@ h3 { margin: .8rem 0 .45rem; font-size: 1.05rem; line-height: 1.3; letter-spacin
    (14 px text, 44 px row) inside the form steps. The welcome view and chat
    rows keep the compact size above. */
 #auth-signin-ui .text-button, #agent-auth-step .text-button { min-height: 44px; font-size: var(--text-sm); }
+#join-account-rooms-link { display: inline-flex; align-items: center; min-height: 44px; font-size: var(--text-sm); }
 /* UI calming #2: the "⋯" overflow menu holds Save as result / Pin / Make this
    work / Record decision / moderation; it fades in with the other actions.
    The fade targets the summary only, never the <details> itself: opacity < 1
