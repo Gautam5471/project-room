@@ -52,7 +52,7 @@ async function doors(t, failure) {
       res.writeHead(200, { "content-type": "application/json" }).end("{}");
       return;
     }
-    const match = req.url.match(/^\/(canonical|room)(\/api\/(version|health|ready)|\/terms|\/privacy|\/|\/\.well-known\/agent-card\.json)$/);
+    const match = req.url.match(/^\/(canonical|room)(\/api\/(version(?:\/worker)?|health|ready)|\/terms|\/privacy|\/|\/\.well-known\/agent-card\.json)$/);
     if (req.method !== "GET" || !match) return res.writeHead(404).end("Unexpected request");
     if (match[2] === "/.well-known/agent-card.json") {
       res.writeHead(200, { "content-type": "application/json" });
@@ -60,10 +60,11 @@ async function doors(t, failure) {
       return;
     }
     let body = { sourceRevision: revision }, code = 200;
+    if (match[3] === 'version/worker') body = { ...body, status: 'ok', servedBy: 'worker' };
     if (match[3] === "health") body = { status: "ok" };
     if (match[3] === "ready") body = { status: "ready" };
     if (!match[3]) body = "<!doctype html><title>Room</title>";
-    if (failure && match[1] === failure.door && match[3] === "version") {
+    if (failure && match[1] === failure.door && match[3] === (failure.worker ? 'version/worker' : 'version')) {
       code = failure.status ?? 200;
       body = failure.body ?? body;
     }
@@ -85,10 +86,14 @@ function run(command, args, options = {}, input = "") {
     child.stdin.end(input);
   });
 }
-async function cli(t, recorded, { failure, withoutEntry = false, file = false } = {}) {
+async function cli(t, recorded, { failure, withoutEntry = false, file = false, preflight } = {}) {
   const http = await doors(t, failure);
   const args = [script, "--prod-id", prodId, "--origin", `${http.origin}/`, "--entry", `${http.entry}/`];
   if (!withoutEntry) args.push("--entry-id", entryId);
+  if (preflight) {
+    const path = join(directory(t), 'preflight.json');
+    writeFileSync(path, JSON.stringify(preflight)); args.push('--preflight', path);
+  }
   const input = typeof recorded === "string" ? recorded : JSON.stringify(recorded);
   if (file) {
     const path = join(directory(t), "status.json");
@@ -160,6 +165,9 @@ test("omitting the entry target records unchanged / not verified, but still read
 // strict Wrangler fixtures. No rollback/deploy commands or production HTTP run.
 async function workflow(t, { recorded = statuses(), commandFailure = false, failure, withoutEntry = false } = {}) {
   const work = directory(t), http = await doors(t, failure);
+  writeFileSync(join(work, 'rollback-preflight.json'), JSON.stringify({ format: 1,
+    targets: { prod: { versionId: prodId, sourceRevision: revision }, entry: withoutEntry ? null : { versionId: entryId, sourceRevision: revision } },
+    current: { entry: { versionId: otherId, sourceRevision: revision } } }));
   writeFileSync(join(work, "pnpm"), `#!/usr/bin/env node
 const args = process.argv.slice(2);
 const production = ["exec", "wrangler", "deployments", "status", "--env", "production", "--json"];
@@ -196,7 +204,7 @@ console.log(JSON.stringify(same(production) ? recorded.prod : recorded.entry));
   }
   const receipt = await run("bash", ["-e", "-c", job.steps[end].run], { cwd: root, env: { ...env,
     ROOM_RECEIPT_TOKEN: "synthetic-local-token", RECEIPT_ROOM: "local-room", OUTCOME: result.code === 0 ? "success" : "failure",
-    READBACK_OUTCOME: readbackOutcome, REASON: "local rollback verification test", RUN_URL: "https://example.invalid/run/1" } });
+    READBACK_OUTCOME: readbackOutcome, PREFLIGHT_OUTCOME: 'success', REASON: "local rollback verification test", RUN_URL: "https://example.invalid/run/1" } });
   assert.equal(receipt.code, 0, receipt.stderr);
   return { ...result, work, http };
 }
@@ -234,4 +242,23 @@ test("workflow with no entry rollback says unchanged and does not claim entry al
   const report = JSON.parse(readFileSync(join(result.work, "rollback-readback.json"), "utf8"));
   assert.equal(report.entry.verified, false);
   assert.equal(report.entry.unchanged, true);
+});
+
+for (const door of ['canonical', 'room']) for (const worker of [false, true]) {
+  test(`workflow refuses ${door} ${worker ? 'Worker' : 'Durable Object'} source mismatch after successful allocation`, async t => {
+    const result = await workflow(t, { failure: { door, worker, body: { status: 'ok', servedBy: 'worker', sourceRevision: 'b'.repeat(40) } } });
+    assert.equal(result.code, 1);
+    const report = JSON.parse(readFileSync(join(result.work, 'rollback-readback.json'), 'utf8'));
+    assert.equal(report.ok, false);
+    assert.match(report.errors.join(' '), /sourceRevision differs from preflight target/);
+    assert.match(result.http.receipts[0].data.body, /readback not verified/);
+    assert.ok(!result.http.requests.some(path => path.endsWith('/api/health')), 'failed readback cannot proceed to smoke');
+  });
+}
+test('readback refuses a mismatched preflight target before reading any door', async t => {
+  const { code, report, http } = await cli(t, statuses(), { preflight: { format: 1,
+    targets: { prod: { versionId: otherId, sourceRevision: revision }, entry: { versionId: entryId, sourceRevision: revision } } } });
+  assert.equal(code, 1); assert.equal(report.ok, false);
+  assert.match(report.errors.join(' '), /preflight source\/target receipt missing or mismatched/);
+  assert.deepEqual(http.requests, []);
 });
