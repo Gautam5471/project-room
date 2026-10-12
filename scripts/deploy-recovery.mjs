@@ -18,7 +18,7 @@ const diagnostic = value => {
   text = text.replace(/\b(Bearer|Basic)\s+[^\s"']+/gi, '$1 [REDACTED]');
   return text.length <= 4096 ? text : `${text.slice(0, 2048)}\n[diagnostic truncated]\n${text.slice(-2048)}`;
 };
-const command = (args, cwd) => {
+export const command = (args, cwd) => {
   const result = spawnSync(args[0], args.slice(1), { cwd, encoding: 'utf8' });
   if (result.error || result.status !== 0) {
     const detail = [result.error?.message && `spawn: ${diagnostic(result.error.message)}`,
@@ -37,8 +37,16 @@ export function schemaAt(revision, git = args => command(['git', ...args])) {
   } catch { return null; }
 }
 export function allocation(status) {
-  const rows = (status?.versions ?? []).filter(row => Number(row.percentage) > 0);
-  const known = rows.length === 1 && rows[0].percentage === 100 && uuidPattern.test(rows[0].version_id ?? '');
+  const versions = Array.isArray(status?.versions) ? status.versions : [];
+  const seen = new Set();
+  const valid = versions.length > 0 && versions.every(row => {
+    if (!row || !uuidPattern.test(row.version_id ?? '') || seen.has(row.version_id) ||
+        typeof row.percentage !== 'number' || !Number.isFinite(row.percentage) || row.percentage < 0 || row.percentage > 100) return false;
+    seen.add(row.version_id);
+    return true;
+  });
+  const rows = versions.filter(row => row && Number(row.percentage) > 0);
+  const known = valid && rows.length === 1 && rows[0].percentage === 100;
   return { known, versions: rows.map(row => ({ versionId: row.version_id, percentage: row.percentage })), versionId: known ? rows[0].version_id : null };
 }
 export function rollbackDecision(previous, candidateSchema) {
@@ -88,7 +96,7 @@ export function recoveryDescription(report) {
   return `${report.status} · ${Object.entries(report.workers).map(([name, row]) => `${name}: ${row.disposition} (previous schema ${row.previousCodeSchemaVersion ?? 'unknown'}, candidate schema ${row.candidateCodeSchemaVersion ?? 'unknown'}, target ${row.previousVersionId ?? 'unknown'})${row.reason ? `: ${row.reason}` : ''}`).join(' · ')}`;
 }
 const workerUrl = origin => `${origin.replace(/\/+$/, '')}/api/version/worker`;
-async function readVersion(origin) {
+export async function readVersion(origin) {
   const response = await fetch(workerUrl(origin), { redirect: 'error', headers: { 'user-agent': 'Mozilla/5.0 project-room-schema-recovery', accept: 'application/json', 'cache-control': 'no-cache' }, signal: AbortSignal.timeout(15000) });
   if (response.status !== 200) throw new Error(`Worker version HTTP ${response.status}`);
   return response.json();
